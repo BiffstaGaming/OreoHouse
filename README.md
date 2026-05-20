@@ -4,18 +4,47 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 0 — scaffolding. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap.
+Phase 0 — scaffolding done. The server boots, the client connects, and `/ws` echoes JSON. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
-## Dev quickstart
+## Prerequisites
 
-Server:
+- **Go** 1.25+ (the module pins it because of `modernc.org/sqlite`'s floor; CLAUDE.md still lists 1.22+ as the project target)
+- **Node** 20+ and **npm**
+- **Rust** stable (rustup) — Tauri builds the desktop shell
+- **MSVC C++ Build Tools** on Windows (Rust's linker)
+- **WebView2 runtime** on Windows clients (preinstalled on recent Windows 10/11)
+- **Docker** Desktop (for the containerized server)
+
+## Layout
+
+```
+server/   Go binary, SQLite, WebSocket hub, REST API
+client/   Tauri v2 + React + TypeScript desktop app
+docs/     ADRs and protocol/schema specs (filled in over later phases)
+```
+
+## Server (dev)
 
 ```bash
 cd server
 go run ./cmd/oreohouse serve
 ```
 
-Client:
+Defaults: HTTP on `:8080`, data dir `./data`. The SQLite file is created at `<data_dir>/oreohouse.db` on first run.
+
+Override via env vars or flags:
+
+| Env var               | Flag         | Default    |
+|-----------------------|--------------|------------|
+| `OREOHOUSE_ADDR`      | `--addr`     | `:8080`    |
+| `OREOHOUSE_DATA_DIR`  | `--data-dir` | `./data`   |
+
+Smoke endpoints in Phase 0:
+
+- `GET /health` → `{"status":"ok"}`
+- `GET /ws` → WebSocket; every JSON message in comes back out with a `received_at` RFC3339Nano timestamp added.
+
+## Client (dev)
 
 ```bash
 cd client
@@ -23,8 +52,47 @@ npm install
 npm run tauri dev
 ```
 
-The full dev workflow (including Docker) lands at the end of Phase 0.
+First-time `tauri dev` compiles the Rust shell (a few minutes), then opens a native window. Subsequent runs are quick.
 
-## Decisions
+The Phase 0 UI is a smoke tester: type a server URL (default `http://localhost:8080`), click **Connect**, drop JSON in the textarea, click **Send**, and the echoed message lands in the log below. `http(s)://host:port` is auto-converted to `ws(s)://host:port/ws`.
 
-Architecture decisions live in [`docs/decisions/`](docs/decisions/).
+## Docker (server)
+
+Build and run the server container from the repo root:
+
+```bash
+docker compose up -d --build
+```
+
+This builds `oreohouse:dev` from the multi-stage `Dockerfile` (`golang:1.25-alpine` builder → `gcr.io/distroless/static-debian12`), exposes `:8080`, and bind-mounts `./data` on the host to `/data` in the container so the SQLite file persists.
+
+Tail logs:
+
+```bash
+docker compose logs -f
+```
+
+Stop and clean up:
+
+```bash
+docker compose down
+```
+
+## Pointing the client at the server
+
+The client's **Server URL** field is what governs the connection — change it to the host running the server. Examples:
+
+- Local dev: `http://localhost:8080`
+- Other PC on the LAN: `http://192.168.1.42:8080` (replace with whatever `ipconfig` / `ip addr` reports for the server machine)
+- Server-on-the-R720xd (once deployed): `http://<server-hostname-or-ip>:8080`
+
+The client converts the HTTP origin to `ws://…/ws` automatically; you don't need to type the WebSocket URL.
+
+## Tests
+
+```bash
+cd server
+go test ./...
+```
+
+The Phase 0 server has no internal packages yet, so this is a no-op. Tests land alongside packages from Phase 1 onward.
