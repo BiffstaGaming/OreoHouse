@@ -130,6 +130,56 @@ func TestHub_BroadcastDoesNotBlockOnFullClientBuffer(t *testing.T) {
 	}
 }
 
+func TestHub_SendToUsersDeliversOnlyToTargetUsers(t *testing.T) {
+	h := startTestHub(t)
+	c1 := newClient(auth.User{ID: 1, Username: "alice"}, 4)
+	c2 := newClient(auth.User{ID: 2, Username: "bob"}, 4)
+	c3 := newClient(auth.User{ID: 3, Username: "carol"}, 4)
+	h.Register(c1)
+	h.Register(c2)
+	h.Register(c3)
+
+	delivered := h.SendToUsers([]byte("hi alice and bob"), []int64{1, 2})
+	if len(delivered) != 2 {
+		t.Errorf("expected 2 delivered, got %v", delivered)
+	}
+
+	for _, c := range []*Client{c1, c2} {
+		select {
+		case msg := <-c.send:
+			if string(msg) != "hi alice and bob" {
+				t.Errorf("client %d wrong body: %s", c.user.ID, msg)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("client %d did not receive", c.user.ID)
+		}
+	}
+	// Carol should not receive.
+	select {
+	case msg := <-c3.send:
+		t.Errorf("carol received unexpected message: %s", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestHub_SendToUsersSkipsOfflineUsers(t *testing.T) {
+	h := startTestHub(t)
+	c1 := newClient(auth.User{ID: 1, Username: "alice"}, 4)
+	h.Register(c1)
+	delivered := h.SendToUsers([]byte("hello"), []int64{1, 99})
+	if len(delivered) != 1 || delivered[0] != 1 {
+		t.Errorf("expected delivered=[1], got %v", delivered)
+	}
+}
+
+func TestHub_SendToUsersEmptySliceIsCheap(t *testing.T) {
+	h := startTestHub(t)
+	delivered := h.SendToUsers([]byte("hi"), nil)
+	if len(delivered) != 0 {
+		t.Errorf("expected no deliveries for empty users, got %v", delivered)
+	}
+}
+
 func TestHub_ConcurrentRegisterUnregister(t *testing.T) {
 	h := startTestHub(t)
 	var wg sync.WaitGroup

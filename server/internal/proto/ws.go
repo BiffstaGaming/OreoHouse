@@ -8,6 +8,7 @@ const (
 	TypeError    = "error"
 	TypePing     = "ping"
 	TypePong     = "pong"
+	TypeMessage  = "message"
 )
 
 // Presence status values for PresenceMessage.Status.
@@ -21,6 +22,7 @@ const (
 const (
 	ErrCodeInvalidMessage = "invalid_message"
 	ErrCodeUnknownType    = "unknown_type"
+	ErrCodeForbidden      = "forbidden"
 )
 
 // Envelope reads the type discriminator off any incoming message
@@ -64,4 +66,23 @@ type PingMessage struct {
 // PongMessage is the server's reply to PingMessage.
 type PongMessage struct {
 	Type string `json:"type"`
+}
+
+// IncomingMessage is the client→server "message" envelope: send a
+// chat message to a conversation the sender is a member of.
+type IncomingMessage struct {
+	Type           string `json:"type"`
+	ConversationID int64  `json:"conversation_id"`
+	Body           string `json:"body"`
+}
+
+// OutgoingMessage is the server→every-member "message" envelope.
+// Echoed to the sender too so a single message path drives all UIs.
+type OutgoingMessage struct {
+	Type           string   `json:"type"`
+	ID             int64    `json:"id"`
+	ConversationID int64    `json:"conversation_id"`
+	Sender         UserInfo `json:"sender"`
+	Body           string   `json:"body"`
+	CreatedAt      string   `json:"created_at"`
 }

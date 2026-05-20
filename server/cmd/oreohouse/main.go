@@ -100,7 +100,7 @@ func runServe(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)
-	wsHandler := ws.NewHandler(hub, authSvc)
+	wsHandler := ws.NewHandler(hub, authSvc, convsSvc, msgsSvc)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

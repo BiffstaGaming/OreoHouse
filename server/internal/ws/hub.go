@@ -41,6 +41,7 @@ type Hub struct {
 	register   chan registerReq
 	unregister chan unregisterReq
 	broadcast  chan broadcastReq
+	sendTo     chan sendToReq
 	snapshot   chan snapshotReq
 
 	// state — only touched from the Run() goroutine
@@ -62,6 +63,12 @@ type broadcastReq struct {
 	msg []byte
 }
 
+type sendToReq struct {
+	msg     []byte
+	userIDs []int64
+	resp    chan []int64
+}
+
 type snapshotReq struct {
 	resp chan []auth.User
 }
@@ -73,6 +80,7 @@ func NewHub() *Hub {
 		register:   make(chan registerReq),
 		unregister: make(chan unregisterReq),
 		broadcast:  make(chan broadcastReq, 64),
+		sendTo:     make(chan sendToReq, 64),
 		snapshot:   make(chan snapshotReq),
 		clients:    make(map[*Client]struct{}),
 		perUser:    make(map[int64]map[*Client]struct{}),
@@ -110,6 +118,26 @@ func (h *Hub) Run(ctx context.Context) {
 					// NOT block the hub.
 				}
 			}
+		case req := <-h.sendTo:
+			delivered := make([]int64, 0, len(req.userIDs))
+			for _, uid := range req.userIDs {
+				set, ok := h.perUser[uid]
+				if !ok || len(set) == 0 {
+					continue
+				}
+				sentOne := false
+				for c := range set {
+					select {
+					case c.send <- req.msg:
+						sentOne = true
+					default:
+					}
+				}
+				if sentOne {
+					delivered = append(delivered, uid)
+				}
+			}
+			req.resp <- delivered
 		case req := <-h.snapshot:
 			out := make([]auth.User, 0, len(h.perUser))
 			for _, set := range h.perUser {
@@ -166,6 +194,21 @@ func (h *Hub) Unregister(c *Client) bool {
 // — broadcast never blocks the hub.
 func (h *Hub) Broadcast(msg []byte) {
 	h.broadcast <- broadcastReq{msg: msg}
+}
+
+// SendToUsers queues msg to every connection owned by any of the
+// given user IDs. Returns the subset of userIDs that had at least one
+// receiving connection — callers use this to advance per-user
+// "last_delivered_message_id" cursors for online recipients. Users
+// without active connections are silently skipped (their replay path
+// will pick the message up when they reconnect).
+func (h *Hub) SendToUsers(msg []byte, userIDs []int64) []int64 {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	resp := make(chan []int64, 1)
+	h.sendTo <- sendToReq{msg: msg, userIDs: userIDs, resp: resp}
+	return <-resp
 }
 
 // OnlineUsers returns one auth.User per currently online user, in

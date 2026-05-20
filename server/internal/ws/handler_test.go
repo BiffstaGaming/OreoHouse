@@ -14,15 +14,19 @@ import (
 
 	server "github.com/BiffstaGaming/OreoHouse/server"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/messages"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/proto"
 )
 
 type testStack struct {
-	db   *sql.DB
-	auth *auth.Service
-	hub  *Hub
-	srv  *httptest.Server
+	db    *sql.DB
+	auth  *auth.Service
+	convs *conversations.Service
+	msgs  *messages.Service
+	hub   *Hub
+	srv   *httptest.Server
 }
 
 func newTestStack(t *testing.T) *testStack {
@@ -36,17 +40,19 @@ func newTestStack(t *testing.T) *testStack {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 	svc := auth.NewService(d, 0)
+	convs := conversations.NewService(d)
+	msgs := messages.NewService(d)
 	hub := NewHub()
 	hubCtx, hubCancel := context.WithCancel(context.Background())
 	go hub.Run(hubCtx)
-	h := NewHandler(hub, svc)
+	h := NewHandler(hub, svc, convs, msgs)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() {
 		srv.Close()
 		hubCancel()
 		_ = d.Close()
 	})
-	return &testStack{db: d, auth: svc, hub: hub, srv: srv}
+	return &testStack{db: d, auth: svc, convs: convs, msgs: msgs, hub: hub, srv: srv}
 }
 
 // seedUser creates a user via the service and returns a fresh session token
@@ -281,6 +287,230 @@ func TestHandler_PingReturnsPong(t *testing.T) {
 	}
 	if typ, _ := readMessage(t, c); typ != proto.TypePong {
 		t.Errorf("expected pong, got %q", typ)
+	}
+}
+
+// seedDM creates a DM between two test users and returns the conversation id.
+func (s *testStack) seedDM(t *testing.T, a, b auth.User) int64 {
+	t.Helper()
+	c, err := s.convs.FindOrCreateDM(context.Background(), a.ID, b.ID)
+	if err != nil {
+		t.Fatalf("FindOrCreateDM: %v", err)
+	}
+	return c.ID
+}
+
+// readUntilMessage reads from c, dropping every message whose envelope
+// type isn't TypeMessage, until it finds one (or 3s timeout). Useful
+// for ignoring welcome / self-presence noise in messaging tests.
+func readUntilMessage(t *testing.T, c *websocket.Conn) (string, []byte) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		typ, raw := readMessage(t, c)
+		if typ == proto.TypeMessage {
+			return typ, raw
+		}
+	}
+	t.Fatalf("did not receive a message envelope within deadline")
+	return "", nil
+}
+
+func TestHandler_MessageSendBroadcastsToConversationMembers(t *testing.T) {
+	s := newTestStack(t)
+	alice, aliceTok := s.seedUser(t, "alice")
+	bob, bobTok := s.seedUser(t, "bob")
+	_, carolTok := s.seedUser(t, "carol") // not a member — must NOT receive
+	convID := s.seedDM(t, alice, bob)
+
+	aliceConn := s.dial(t, aliceTok)
+	bobConn := s.dial(t, bobTok)
+	carolConn := s.dial(t, carolTok)
+
+	// Drain initial welcome + self-presence on each.
+	_, _ = readMessage(t, aliceConn)
+	_, _ = readMessage(t, aliceConn)
+	_, _ = readMessage(t, bobConn)
+	_, _ = readMessage(t, bobConn)
+	_, _ = readMessage(t, carolConn)
+	_, _ = readMessage(t, carolConn)
+
+	// (alice and bob may have also seen presence(bob,online) and
+	// presence(carol,online) by now. readUntilMessage ignores them.)
+
+	// Alice sends a message.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "hello bob",
+	})
+	if err := aliceConn.Write(ctx, websocket.MessageText, body); err != nil {
+		t.Fatalf("alice write: %v", err)
+	}
+
+	// Both alice and bob get the OutgoingMessage.
+	for _, conn := range []*websocket.Conn{aliceConn, bobConn} {
+		_, raw := readUntilMessage(t, conn)
+		var out proto.OutgoingMessage
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode outgoing: %v", err)
+		}
+		if out.Body != "hello bob" || out.Sender.ID != alice.ID || out.ConversationID != convID {
+			t.Errorf("wrong outgoing on conn: %+v", out)
+		}
+		if out.ID == 0 {
+			t.Errorf("expected non-zero message ID")
+		}
+	}
+}
+
+func TestHandler_MessageRejectedForNonMember(t *testing.T) {
+	s := newTestStack(t)
+	alice, _ := s.seedUser(t, "alice")
+	bob, _ := s.seedUser(t, "bob")
+	_, carolTok := s.seedUser(t, "carol")
+	convID := s.seedDM(t, alice, bob)
+
+	carolConn := s.dial(t, carolTok)
+	_, _ = readMessage(t, carolConn) // welcome
+	_, _ = readMessage(t, carolConn) // self-presence
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "intruder",
+	})
+	if err := carolConn.Write(ctx, websocket.MessageText, body); err != nil {
+		t.Fatalf("carol write: %v", err)
+	}
+
+	// Next message Carol receives should be an error, not a message.
+	typ, raw := readMessage(t, carolConn)
+	if typ != proto.TypeError {
+		t.Fatalf("expected error, got %q (%s)", typ, raw)
+	}
+	var em proto.ErrorMessage
+	_ = json.Unmarshal(raw, &em)
+	if em.Code != proto.ErrCodeForbidden {
+		t.Errorf("expected code %q, got %q", proto.ErrCodeForbidden, em.Code)
+	}
+}
+
+func TestHandler_MessageRejectedForEmptyBody(t *testing.T) {
+	s := newTestStack(t)
+	alice, aliceTok := s.seedUser(t, "alice")
+	bob, _ := s.seedUser(t, "bob")
+	convID := s.seedDM(t, alice, bob)
+
+	aliceConn := s.dial(t, aliceTok)
+	_, _ = readMessage(t, aliceConn) // welcome
+	_, _ = readMessage(t, aliceConn) // self-presence
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "",
+	})
+	if err := aliceConn.Write(ctx, websocket.MessageText, body); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	typ, _ := readMessage(t, aliceConn)
+	if typ != proto.TypeError {
+		t.Errorf("expected error for empty body, got %q", typ)
+	}
+}
+
+func TestHandler_ReplayMissedMessagesOnConnect(t *testing.T) {
+	s := newTestStack(t)
+	alice, aliceTok := s.seedUser(t, "alice")
+	bob, bobTok := s.seedUser(t, "bob")
+	convID := s.seedDM(t, alice, bob)
+
+	// Bob sends two messages while alice is offline.
+	bobConn := s.dial(t, bobTok)
+	_, _ = readMessage(t, bobConn) // welcome
+	_, _ = readMessage(t, bobConn) // self-presence
+
+	for _, body := range []string{"one", "two"} {
+		out, _ := json.Marshal(proto.IncomingMessage{
+			Type: proto.TypeMessage, ConversationID: convID, Body: body,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = bobConn.Write(ctx, websocket.MessageText, out)
+		cancel()
+		// Drain bob's own echo so the next read is clean.
+		_, _ = readUntilMessage(t, bobConn)
+	}
+
+	// Alice connects → welcome first, then the two replayed messages.
+	// Self-presence (alice online) is queued via the hub broadcast
+	// channel and only drains once the writer goroutine starts, which
+	// happens AFTER the inline replay writes, so on the wire it
+	// arrives after the replayed messages — readUntilMessage skips it.
+	aliceConn := s.dial(t, aliceTok)
+	_, _ = readMessage(t, aliceConn) // welcome
+
+	var bodies []string
+	for i := 0; i < 2; i++ {
+		_, raw := readUntilMessage(t, aliceConn)
+		var msg proto.OutgoingMessage
+		_ = json.Unmarshal(raw, &msg)
+		bodies = append(bodies, msg.Body)
+	}
+	if !(bodies[0] == "one" && bodies[1] == "two") {
+		t.Errorf("expected replay order [one, two], got %v", bodies)
+	}
+}
+
+func TestHandler_LiveDeliveryAdvancesCursorAndPreventsReplay(t *testing.T) {
+	s := newTestStack(t)
+	alice, aliceTok := s.seedUser(t, "alice")
+	bob, bobTok := s.seedUser(t, "bob")
+	convID := s.seedDM(t, alice, bob)
+
+	// Both online.
+	aliceConn := s.dial(t, aliceTok)
+	bobConn := s.dial(t, bobTok)
+	for _, c := range []*websocket.Conn{aliceConn, bobConn} {
+		_, _ = readMessage(t, c) // welcome
+		_, _ = readMessage(t, c) // self-presence
+	}
+
+	// Bob sends one message; alice receives it live.
+	body, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "live",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = bobConn.Write(ctx, websocket.MessageText, body)
+	cancel()
+	_, _ = readUntilMessage(t, aliceConn)
+
+	// Alice disconnects.
+	_ = aliceConn.Close(websocket.StatusNormalClosure, "bye")
+
+	// Wait briefly so the hub processes the disconnect.
+	time.Sleep(150 * time.Millisecond)
+
+	// Alice reconnects with the same session. Replay should be empty
+	// — readUntilMessage would block past the timeout and t.Fatal.
+	aliceConn2 := s.dial(t, aliceTok)
+	_, _ = readMessage(t, aliceConn2) // welcome
+	_, _ = readMessage(t, aliceConn2) // self-presence
+
+	// Send a fresh message and confirm alice2 sees IT, not a stale
+	// replay of "live".
+	body2, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "fresh",
+	})
+	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+	_ = bobConn.Write(ctx, websocket.MessageText, body2)
+	cancel()
+
+	_, raw := readUntilMessage(t, aliceConn2)
+	var out proto.OutgoingMessage
+	_ = json.Unmarshal(raw, &out)
+	if out.Body != "fresh" {
+		t.Errorf("expected 'fresh' (no stale replay), got %q", out.Body)
 	}
 }
 
