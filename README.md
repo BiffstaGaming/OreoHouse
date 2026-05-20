@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 2 — WebSocket hub landed. `/ws` now requires a session token, the server tracks online users in an in-memory hub, and presence (online/offline) is broadcast to every connected client when a user's first connection opens or last one closes. The client got a real login form + live "who's online" list. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 3 — direct messages landed. Conversations live in SQLite (DMs auto-created on first interaction), messages are persisted with monotonic IDs, the WebSocket carries `message` events both ways with replay-on-reconnect for anything you missed while offline, and REST endpoints expose conversation list + cursor-paginated history. The client is now a real (if minimal) chat app: presence on the left, conversation thread on the right, composer + Enter to send. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -55,6 +55,9 @@ Endpoints:
 - `GET /ws?token=<session>` → WebSocket; requires a valid session token. See [WebSocket](#websocket) below and [`docs/protocol.md`](docs/protocol.md) for the message catalog.
 - `POST /api/auth/login` → see [Authentication](#authentication) below.
 - `POST /api/auth/logout` → idempotent, deletes the session.
+- `GET /api/conversations` → list conversations the caller is a member of (Bearer token required).
+- `POST /api/conversations/dm` → find-or-create a DM with `{ "user_id": N }`.
+- `GET /api/conversations/{id}/messages?before=<id>&limit=<n>` → cursor-paginated history, newest first. Caller must be a member of the conversation; non-members get 404.
 
 ## Authentication
 
@@ -101,7 +104,12 @@ Presence is derived from connection state:
 - A user "goes offline" when their **last** connection closes (so two laptops + a phone count as one online user). `presence` with `status="offline"` is broadcast and `users.last_seen_at` is updated.
 - Immediately after a successful upgrade the server sends a `welcome` message with a snapshot of who's currently online, so the client doesn't poll.
 
-Full message catalog (welcome, presence, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
+Messaging:
+
+- Client posts `{"type":"message","conversation_id":N,"body":"..."}` over the WS. The server validates membership and the 4 KB body cap, persists, and broadcasts a server-side `message` envelope (with the assigned `id`, `sender`, and `created_at`) to every member of the conversation — including the sender, so all UIs add the row through one path.
+- On reconnect, after `welcome`, the server replays any messages whose `id` is greater than the receiver's per-conversation `last_delivered_message_id` cursor (advanced as live deliveries succeed). Replay completes before live messages start streaming, so order is preserved.
+
+Full message catalog (welcome, presence, message, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
 
 ## User management
 
@@ -230,4 +238,4 @@ cd server
 go test ./...
 ```
 
-Phase 2 brings the count to ~70 tests across `db`, `auth`, `admin`, `api`, `proto`, and `ws`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
+Phase 3 brings the count to ~100 tests across `db`, `auth`, `admin`, `api`, `proto`, `ws`, `conversations`, and `messages`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
