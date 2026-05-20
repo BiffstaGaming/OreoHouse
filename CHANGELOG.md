@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.2.0...v0.3.0) (2026-05-20)
+
+
+### Features
+
+* **client:** login form + live presence list ([ab400f6](https://github.com/BiffstaGaming/OreoHouse/commit/ab400f6a4ba2105c60cbe8aab414e94b32f37c54))
+* **ws:** authenticated hub with online/offline presence ([196027b](https://github.com/BiffstaGaming/OreoHouse/commit/196027b3a00182ccf63e4261aba24f3160d0c8de))
+
+
+### Bug Fixes
+
+* **ci:** pass --repo to gh workflow run in release-please ([f724735](https://github.com/BiffstaGaming/OreoHouse/commit/f7247352574bd2b3b8ee92d03a3a7d685389b91f))
+
 ## [0.2.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.1.0...v0.2.0) (2026-05-20)
 
 
