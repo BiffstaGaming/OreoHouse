@@ -1,0 +1,14 @@
+# Keep the build context tiny — Dockerfile only needs server/.
+/client
+/docs
+/data
+.git
+.gitignore
+.gitattributes
+README.md
+CLAUDE.md
+docker-compose.yml
+**/node_modules
+**/target
+**/dist
+**/*.log
