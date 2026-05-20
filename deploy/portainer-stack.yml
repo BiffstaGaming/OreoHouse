@@ -1,0 +1,20 @@
+# Paste this into Portainer → Stacks → Add stack → Web editor.
+# Uses the image published by .github/workflows/build-server-image.yml.
+# Pin a specific tag (e.g. :phase-0, :sha-abc1234) once you start
+# tagging real releases — :latest is fine for now.
+
+services:
+  oreohouse:
+    image: ghcr.io/biffstagaming/oreohouse:latest
+    container_name: oreohouse
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - oreohouse-data:/data
+    environment:
+      OREOHOUSE_ADDR: ":8080"
+      OREOHOUSE_DATA_DIR: "/data"
+
+volumes:
+  oreohouse-data:

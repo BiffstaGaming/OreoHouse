@@ -78,6 +78,27 @@ Stop and clean up:
 docker compose down
 ```
 
+## Published image (GHCR)
+
+Every push to `main` and every `v*` / `phase-*` tag triggers [`.github/workflows/build-server-image.yml`](.github/workflows/build-server-image.yml), which builds the multi-stage `Dockerfile` and pushes to `ghcr.io/biffstagaming/oreohouse`.
+
+Tags produced:
+
+- `latest` and `main` on every push to `main`
+- the ref name on `v*` / `phase-*` tag pushes (plus `1.2` / `1.2.3` for SemVer)
+- `sha-<short>` on every successful build, for exact pinning
+
+The package inherits visibility from this (private) repo by default. To pull from your home server you have two choices:
+
+1. **Make the package public.** On github.com: this repo → Packages → `oreohouse` → Package settings → Change visibility → Public. After that, anyone (including Portainer with no auth) can `docker pull`.
+2. **Keep it private + authenticate.** Generate a PAT with `read:packages` scope (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token). Then in Portainer: Registries → Add registry → Custom registry, URL `ghcr.io`, username = your GitHub username, password = the PAT. Portainer will use those creds for every `ghcr.io/...` pull.
+
+## Deploying with Portainer
+
+Once the package is reachable, paste [`deploy/portainer-stack.yml`](deploy/portainer-stack.yml) into Portainer → Stacks → Add stack → Web editor. It pulls `:latest`, exposes `:8080`, persists `/data` in a Docker-managed named volume, and restarts unless stopped.
+
+To upgrade after a new image is published: Portainer → Stacks → `oreohouse` → Editor → "Pull and redeploy".
+
 ## Pointing the client at the server
 
 The client's **Server URL** field is what governs the connection — change it to the host running the server. Examples:
