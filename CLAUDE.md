@@ -174,7 +174,7 @@ Server container exposes `:8080`. Volume `./data` mounted at `/data` inside the 
 
 - [x] **Phase 0** — Scaffold: repo layout, hello-world Go server with `/health` and an echo `/ws`, hello-world Tauri client that connects and echoes.
 - [x] **Phase 1** — Auth: users table, password hashing, sessions, `POST /api/auth/login` + `/api/auth/logout`, `oreohouse user add` / `user list` CLI.
-- [ ] **Phase 2** — WebSocket hub: presence (online/away/offline), connection lifecycle, broadcast to interested clients
+- [x] **Phase 2** — WebSocket hub: authenticated `/ws?token=`, in-memory connection registry, online/offline presence broadcasts (away is deferred to Phase 7), `last_seen_at` on disconnect, client login + presence list.
 - [ ] **Phase 3** — Messaging: DM creation, send/receive, persisted history, offline queue and replay-on-reconnect
 - [ ] **Phase 4** — Groups and rooms: schema + creation + member management + UI flavors
 - [ ] **Phase 5** — File and photo uploads: REST endpoints, inline previews for images

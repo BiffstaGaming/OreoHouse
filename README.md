@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 1 — auth landed. Users live in SQLite with bcrypt password hashes, sessions are opaque tokens with optional TTL, and the server exposes `POST /api/auth/login` and `POST /api/auth/logout`. An `oreohouse user add` CLI lives next to the server binary for account provisioning. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 2 — WebSocket hub landed. `/ws` now requires a session token, the server tracks online users in an in-memory hub, and presence (online/offline) is broadcast to every connected client when a user's first connection opens or last one closes. The client got a real login form + live "who's online" list. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -52,7 +52,7 @@ Override via env vars or flags:
 Endpoints:
 
 - `GET /health` → `{"status":"ok"}`
-- `GET /ws` → WebSocket; every JSON message in comes back out with a `received_at` RFC3339Nano timestamp added. Phase 2 will add session-token authentication here.
+- `GET /ws?token=<session>` → WebSocket; requires a valid session token. See [WebSocket](#websocket) below and [`docs/protocol.md`](docs/protocol.md) for the message catalog.
 - `POST /api/auth/login` → see [Authentication](#authentication) below.
 - `POST /api/auth/logout` → idempotent, deletes the session.
 
@@ -90,6 +90,18 @@ curl -X POST http://localhost:8080/api/auth/logout \
 ```
 
 Returns 204 even if the token doesn't match a live session — logout is idempotent.
+
+## WebSocket
+
+After login, the client opens a single WebSocket to `ws://host:8080/ws?token=<token>`. The token comes from `POST /api/auth/login`. Missing or invalid tokens are rejected with HTTP 401 *before* the upgrade — there is no in-band auth error.
+
+Presence is derived from connection state:
+
+- A user "comes online" when their **first** connection opens. The server broadcasts `presence` with `status="online"` to every connected client.
+- A user "goes offline" when their **last** connection closes (so two laptops + a phone count as one online user). `presence` with `status="offline"` is broadcast and `users.last_seen_at` is updated.
+- Immediately after a successful upgrade the server sends a `welcome` message with a snapshot of who's currently online, so the client doesn't poll.
+
+Full message catalog (welcome, presence, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
 
 ## User management
 
@@ -218,4 +230,4 @@ cd server
 go test ./...
 ```
 
-Phase 1 added test coverage for the `db`, `auth`, `admin`, and `api` packages (~50 tests). New `internal/*` packages should follow the same pattern.
+Phase 2 brings the count to ~70 tests across `db`, `auth`, `admin`, `api`, `proto`, and `ws`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
