@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.3.0...v0.4.0) (2026-05-20)
+
+
+### Features
+
+* **api:** /api/conversations + /api/conversations/{id}/messages ([86e3daa](https://github.com/BiffstaGaming/OreoHouse/commit/86e3daacebecfabda5e7face845600d78d666eea))
+* **client:** side-by-side presence + chat UI ([4cc94b4](https://github.com/BiffstaGaming/OreoHouse/commit/4cc94b44f3cbc640c3a1031165fd7bb27f791495))
+* **db:** conversations schema + service ([5155050](https://github.com/BiffstaGaming/OreoHouse/commit/515505045a7db2997a2a9b96641d8f89a706f393))
+* **db:** messages.Service — send, history, replay ([23ba034](https://github.com/BiffstaGaming/OreoHouse/commit/23ba034e0351a0fd5a52c281672c95f7c44be20b))
+* **ws:** message send/receive over /ws + replay on reconnect ([e91a78f](https://github.com/BiffstaGaming/OreoHouse/commit/e91a78fe8d2300325da5080a5793a527f64f3d87))
+
 ## [0.3.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.2.0...v0.3.0) (2026-05-20)
 
 
