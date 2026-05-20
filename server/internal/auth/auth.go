@@ -242,6 +242,18 @@ func (s *Service) LookupSession(ctx context.Context, token string) (User, Sessio
 	return u, sess, nil
 }
 
+// UpdateLastSeen sets the last_seen_at column on the given user to
+// at. Used by the WebSocket handler when a user's last connection
+// closes.
+func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, at time.Time) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE users SET last_seen_at = ? WHERE id = ?",
+		formatTime(at), userID); err != nil {
+		return fmt.Errorf("updating last_seen_at: %w", err)
+	}
+	return nil
+}
+
 // DeleteSession deletes the session with the given token. Returns nil
 // even if no session matches (logout is idempotent).
 func (s *Service) DeleteSession(ctx context.Context, token string) error {

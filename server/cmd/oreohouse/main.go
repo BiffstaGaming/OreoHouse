@@ -16,8 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -26,6 +24,7 @@ import (
 	"github.com/BiffstaGaming/OreoHouse/server/internal/api"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/ws"
 )
 
 const (
@@ -91,10 +90,16 @@ func runServe(args []string) error {
 	authSvc := auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
 	authHandler := api.NewAuthHandler(authSvc)
 
+	hub := ws.NewHub()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go hub.Run(ctx)
+	wsHandler := ws.NewHandler(hub, authSvc)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Get("/health", handleHealth)
-	r.Get("/ws", handleWS)
+	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
 
 	srv := &http.Server{
@@ -102,9 +107,6 @@ func runServe(args []string) error {
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -188,36 +190,4 @@ func daysAsDuration(days int) time.Duration {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-func handleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Phase 0: LAN-only dev, accept any origin so the Tauri client
-		// (which uses a custom protocol origin) can connect.
-		InsecureSkipVerify: true,
-	})
-	if err != nil {
-		slog.Error("ws accept failed", "error", err)
-		return
-	}
-	defer conn.Close(websocket.StatusInternalError, "internal error")
-
-	slog.Info("ws client connected", "remote", r.RemoteAddr)
-
-	ctx := r.Context()
-	for {
-		var incoming map[string]any
-		if err := wsjson.Read(ctx, conn, &incoming); err != nil {
-			slog.Info("ws client disconnected", "remote", r.RemoteAddr, "error", err)
-			return
-		}
-		if incoming == nil {
-			incoming = map[string]any{}
-		}
-		incoming["received_at"] = time.Now().UTC().Format(time.RFC3339Nano)
-		if err := wsjson.Write(ctx, conn, incoming); err != nil {
-			slog.Info("ws write failed", "remote", r.RemoteAddr, "error", err)
-			return
-		}
-	}
 }

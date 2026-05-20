@@ -22,11 +22,21 @@ import (
 // Open opens (or creates) the SQLite database at the given filesystem
 // path and turns on foreign-key enforcement. Pass ":memory:" for an
 // ephemeral in-memory database (useful in tests).
+//
+// The connection pool is capped at one open connection. SQLite
+// serializes writes anyway, so this costs us nothing under our scale
+// (~5 family users) and prevents two important footguns:
+//   - With path=":memory:", every new connection creates an
+//     independent in-memory database, so concurrent writes via the
+//     pool would silently go to different databases.
+//   - On a file-backed DB, multiple writers race for the same lock
+//     and emit "database is locked" errors under contention.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
 	d, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite at %q: %w", path, err)
 	}
+	d.SetMaxOpenConns(1)
 	if err := d.PingContext(ctx); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("pinging sqlite: %w", err)
