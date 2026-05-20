@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 0 — scaffolding done. The server boots, the client connects, and `/ws` echoes JSON. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 1 — auth landed. Users live in SQLite with bcrypt password hashes, sessions are opaque tokens with optional TTL, and the server exposes `POST /api/auth/login` and `POST /api/auth/logout`. An `oreohouse user add` CLI lives next to the server binary for account provisioning. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -43,15 +43,81 @@ Defaults: HTTP on `:8080`, data dir `./data`. The SQLite file is created at `<da
 
 Override via env vars or flags:
 
-| Env var               | Flag         | Default    |
-|-----------------------|--------------|------------|
-| `OREOHOUSE_ADDR`      | `--addr`     | `:8080`    |
-| `OREOHOUSE_DATA_DIR`  | `--data-dir` | `./data`   |
+| Env var                       | Flag                  | Default  | Notes                                            |
+|-------------------------------|-----------------------|----------|--------------------------------------------------|
+| `OREOHOUSE_ADDR`              | `--addr`              | `:8080`  | HTTP listen address                              |
+| `OREOHOUSE_DATA_DIR`          | `--data-dir`          | `./data` | SQLite file + uploads dir                        |
+| `OREOHOUSE_SESSION_TTL_DAYS`  | `--session-ttl-days`  | `0`      | Session token lifetime in days; `0` = never expire |
 
-Smoke endpoints in Phase 0:
+Endpoints:
 
 - `GET /health` → `{"status":"ok"}`
-- `GET /ws` → WebSocket; every JSON message in comes back out with a `received_at` RFC3339Nano timestamp added.
+- `GET /ws` → WebSocket; every JSON message in comes back out with a `received_at` RFC3339Nano timestamp added. Phase 2 will add session-token authentication here.
+- `POST /api/auth/login` → see [Authentication](#authentication) below.
+- `POST /api/auth/logout` → idempotent, deletes the session.
+
+## Authentication
+
+Accounts are pre-provisioned by the admin via [user management](#user-management); there is no self-signup.
+
+**Login:**
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"hunter2hunter"}'
+```
+
+Response on success (HTTP 200):
+
+```json
+{
+  "token": "7634928ace…a8",
+  "expires_at": "2026-06-20T12:00:00Z",
+  "user": { "id": 1, "username": "alice", "created_at": "2026-05-20T21:43:25.41Z" }
+}
+```
+
+`expires_at` is omitted when `OREOHOUSE_SESSION_TTL_DAYS=0`. The token goes in `Authorization: Bearer <token>` on later authenticated requests.
+
+Bad credentials and unknown usernames both return HTTP 401 with `{"error":"invalid credentials"}` so a caller can't enumerate accounts.
+
+**Logout:**
+
+```bash
+curl -X POST http://localhost:8080/api/auth/logout \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns 204 even if the token doesn't match a live session — logout is idempotent.
+
+## User management
+
+Account provisioning happens via the same `oreohouse` binary, against the same SQLite file the server uses (set `OREOHOUSE_DATA_DIR` to point at it).
+
+```bash
+# Interactive: prompts for password, hides input, confirms.
+oreohouse user add --username alice
+
+# Scriptable: read password from stdin.
+echo 'hunter2hunter' | oreohouse user add --username alice --password-stdin
+
+# List all users.
+oreohouse user list
+```
+
+Constraints enforced by the CLI and server:
+
+- Username: 2–32 characters, `[A-Za-z0-9_-]`, case-insensitive uniqueness.
+- Password: 8 characters minimum (bcrypt-hashed at cost 10 before storage).
+
+There is no `--password` flag — argv leaks to shell history and `ps`. Use the prompt or `--password-stdin`.
+
+Running these inside the running Docker container:
+
+```bash
+docker exec -it oreohouse /app/oreohouse user list
+```
 
 ## Client (dev)
 
@@ -89,12 +155,12 @@ docker compose down
 
 ## Published image (GHCR)
 
-Every push to `main` and every `v*` / `phase-*` tag triggers [`.github/workflows/build-server-image.yml`](.github/workflows/build-server-image.yml), which builds the multi-stage `Dockerfile` and pushes to `ghcr.io/biffstagaming/oreohouse`.
+Every push to `main` and every `v*` tag triggers [`.github/workflows/build-server-image.yml`](.github/workflows/build-server-image.yml), which builds the multi-stage `Dockerfile` and pushes to `ghcr.io/biffstagaming/oreohouse`.
 
 Tags produced:
 
 - `latest` and `main` on every push to `main`
-- the ref name on `v*` / `phase-*` tag pushes (plus `1.2` / `1.2.3` for SemVer)
+- `vX.Y.Z` plus the SemVer-derived `X.Y` and `X.Y.Z` on `v*` tag pushes
 - `sha-<short>` on every successful build, for exact pinning
 
 The package inherits visibility from this (private) repo by default. To pull from your home server you have two choices:
@@ -104,7 +170,7 @@ The package inherits visibility from this (private) repo by default. To pull fro
 
 ## Windows client releases
 
-Pushing a `v*` or `phase-*` tag also triggers [`.github/workflows/build-windows-app.yml`](.github/workflows/build-windows-app.yml), which runs on a Windows runner, builds the Tauri MSI + NSIS installers, and attaches them to a GitHub Release named after the tag. The latest release is shown in the sidebar on the repo's main page; the full list is at [Releases](https://github.com/BiffstaGaming/OreoHouse/releases).
+Pushing a `v*` tag also triggers [`.github/workflows/build-windows-app.yml`](.github/workflows/build-windows-app.yml), which runs on a Windows runner, builds the Tauri MSI + NSIS installers, and attaches them to a GitHub Release named after the tag. The latest release is shown in the sidebar on the repo's main page; the full list is at [Releases](https://github.com/BiffstaGaming/OreoHouse/releases).
 
 The installers aren't code-signed (hobby project, no cert). On first launch Windows SmartScreen will warn — click **More info → Run anyway**, or right-click the downloaded file → Properties → Unblock before opening.
 
@@ -152,4 +218,4 @@ cd server
 go test ./...
 ```
 
-The Phase 0 server has no internal packages yet, so this is a no-op. Tests land alongside packages from Phase 1 onward.
+Phase 1 added test coverage for the `db`, `auth`, `admin`, and `api` packages (~50 tests). New `internal/*` packages should follow the same pattern.

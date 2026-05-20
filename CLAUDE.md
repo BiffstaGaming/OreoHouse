@@ -125,9 +125,9 @@ OreoHouse/
 
 ### Commits
 
-- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`
-- One logical change per commit
-- Tag phase completions: `phase-0`, `phase-1`, …
+- Conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:` — release-please reads these to compute the next semver bump.
+- One logical change per commit.
+- Release tags (`vX.Y.Z`) are created by release-please when its release PR is merged. Manual phase tags (`phase-1`, `phase-2`, ...) are informational milestone markers and do NOT trigger build/release workflows.
 
 ## Testing
 
@@ -172,8 +172,8 @@ Server container exposes `:8080`. Volume `./data` mounted at `/data` inside the 
 
 ## Roadmap
 
-- [ ] **Phase 0** — Scaffold: repo layout, hello-world Go server with `/health` and an echo `/ws`, hello-world Tauri client that connects and echoes
-- [ ] **Phase 1** — Auth: users table, password hashing, sessions, login endpoint, `oreohouse user add` CLI
+- [x] **Phase 0** — Scaffold: repo layout, hello-world Go server with `/health` and an echo `/ws`, hello-world Tauri client that connects and echoes.
+- [x] **Phase 1** — Auth: users table, password hashing, sessions, `POST /api/auth/login` + `/api/auth/logout`, `oreohouse user add` / `user list` CLI.
 - [ ] **Phase 2** — WebSocket hub: presence (online/away/offline), connection lifecycle, broadcast to interested clients
 - [ ] **Phase 3** — Messaging: DM creation, send/receive, persisted history, offline queue and replay-on-reconnect
 - [ ] **Phase 4** — Groups and rooms: schema + creation + member management + UI flavors
