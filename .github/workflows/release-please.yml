@@ -7,13 +7,29 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # actions: write so this workflow can dispatch the downstream
+  # build-server-image and build-windows-app workflows after a release.
+  # GITHUB_TOKEN cannot trigger workflows via normal push events for
+  # safety, but workflow_dispatch is exempt.
+  actions: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Trigger downstream builds
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          gh workflow run build-server-image.yml --ref "$TAG"
+          gh workflow run build-windows-app.yml  --ref "$TAG"
