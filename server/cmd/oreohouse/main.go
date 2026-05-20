@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -20,6 +22,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	server "github.com/BiffstaGaming/OreoHouse/server"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
 )
 
@@ -44,6 +48,11 @@ func main() {
 			slog.Error("serve failed", "error", err)
 			os.Exit(1)
 		}
+	case "user":
+		if err := runUser(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -58,31 +67,29 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  serve   Run the HTTP + WebSocket server")
+	fmt.Fprintln(os.Stderr, "  user    Manage user accounts (add, list)")
 }
 
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", envOr("OREOHOUSE_ADDR", defaultAddr), "HTTP listen address (also OREOHOUSE_ADDR)")
 	dataDir := fs.String("data-dir", envOr("OREOHOUSE_DATA_DIR", defaultDataDir), "data directory for SQLite + uploads (also OREOHOUSE_DATA_DIR)")
+	sessionTTLDays := fs.Int("session-ttl-days", envOrInt("OREOHOUSE_SESSION_TTL_DAYS", 0), "session token lifetime in days; 0 = never expire (also OREOHOUSE_SESSION_TTL_DAYS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
-		return fmt.Errorf("creating data dir: %w", err)
-	}
-
-	dbPath := filepath.Join(*dataDir, dbFilename)
 	startupCtx := context.Background()
-	sqlDB, err := db.Open(startupCtx, dbPath)
+	sqlDB, err := openDB(startupCtx, *dataDir)
 	if err != nil {
 		return err
 	}
 	defer sqlDB.Close()
-	if err := db.Migrate(startupCtx, sqlDB, server.Migrations()); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
-	}
-	slog.Info("sqlite opened", "path", dbPath)
+	slog.Info("sqlite opened", "path", filepath.Join(*dataDir, dbFilename))
+
+	_ = auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
+	// auth.Service is constructed but not yet wired into any handlers —
+	// Phase 1.4 will mount /api/auth/login on the router below.
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -122,11 +129,59 @@ func runServe(args []string) error {
 	return nil
 }
 
+func runUser(args []string) error {
+	dataDir := envOr("OREOHOUSE_DATA_DIR", defaultDataDir)
+	ctx := context.Background()
+	sqlDB, err := openDB(ctx, dataDir)
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	// TTL is irrelevant for CLI operations; they don't create sessions.
+	svc := auth.NewService(sqlDB, 0)
+	return admin.RunUser(ctx, args, svc, os.Stdin, os.Stdout)
+}
+
+func openDB(ctx context.Context, dataDir string) (*sql.DB, error) {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating data dir: %w", err)
+	}
+	dbPath := filepath.Join(dataDir, dbFilename)
+	d, err := db.Open(ctx, dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Migrate(ctx, d, server.Migrations()); err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+	return d, nil
+}
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+func envOrInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func daysAsDuration(days int) time.Duration {
+	if days <= 0 {
+		return 0
+	}
+	return time.Duration(days) * 24 * time.Hour
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
