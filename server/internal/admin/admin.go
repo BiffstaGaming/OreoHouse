@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -17,6 +18,12 @@ import (
 
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 )
+
+// utf8BOM is the three bytes EF BB BF (U+FEFF, UTF-8 encoded). PowerShell
+// 5.1 prepends this to anything piped to a native command, and the
+// password-stdin path strips it so passwords typed at the keyboard match
+// what gets hashed.
+var utf8BOM = string([]byte{0xEF, 0xBB, 0xBF})
 
 // RunUser dispatches the "user" subcommands ("add" and "list").
 // args is the arguments after "user" (e.g. ["add", "--username", "x"]).
@@ -106,7 +113,10 @@ func readPassword(fromStdin bool, stdin io.Reader) (string, error) {
 			}
 			return "", errors.New("expected a password on stdin")
 		}
-		return s.Text(), nil
+		// PowerShell 5.1 prepends a UTF-8 BOM (EF BB BF) when piping
+		// strings to native commands. Strip a leading BOM so the password
+		// the user typed matches what we hash.
+		return strings.TrimPrefix(s.Text(), utf8BOM), nil
 	}
 	pw, err := promptPassword("Password: ")
 	if err != nil {

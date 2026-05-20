@@ -100,6 +100,24 @@ func TestRunUser_AddShortPassword(t *testing.T) {
 	}
 }
 
+func TestRunUser_AddStripsUTF8BOM(t *testing.T) {
+	// PowerShell 5.1 prepends a UTF-8 BOM when piping strings to native
+	// commands. The CLI must strip it so the password the user typed is
+	// what gets hashed.
+	ctx := context.Background()
+	svc := newTestService(t)
+	stdin := strings.NewReader(string([]byte{0xEF, 0xBB, 0xBF}) + "hunter2hunter\n")
+	var stdout bytes.Buffer
+
+	err := RunUser(ctx, []string{"add", "--username", "alice", "--password-stdin"}, svc, stdin, &stdout)
+	if err != nil {
+		t.Fatalf("RunUser: %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, "alice", "hunter2hunter"); err != nil {
+		t.Errorf("expected to authenticate alice with BOM-free password, got %v", err)
+	}
+}
+
 func TestRunUser_AddEmptyStdin(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)

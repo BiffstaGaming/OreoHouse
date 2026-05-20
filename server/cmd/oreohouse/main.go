@@ -23,6 +23,7 @@ import (
 
 	server "github.com/BiffstaGaming/OreoHouse/server"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/api"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
 )
@@ -87,14 +88,14 @@ func runServe(args []string) error {
 	defer sqlDB.Close()
 	slog.Info("sqlite opened", "path", filepath.Join(*dataDir, dbFilename))
 
-	_ = auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
-	// auth.Service is constructed but not yet wired into any handlers —
-	// Phase 1.4 will mount /api/auth/login on the router below.
+	authSvc := auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
+	authHandler := api.NewAuthHandler(authSvc)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Get("/health", handleHealth)
 	r.Get("/ws", handleWS)
+	authHandler.Mount(r)
 
 	srv := &http.Server{
 		Addr:              *addr,
