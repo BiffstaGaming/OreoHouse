@@ -23,7 +23,9 @@ import (
 	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/api"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/messages"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/ws"
 )
 
@@ -88,7 +90,11 @@ func runServe(args []string) error {
 	slog.Info("sqlite opened", "path", filepath.Join(*dataDir, dbFilename))
 
 	authSvc := auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
+	convsSvc := conversations.NewService(sqlDB)
+	msgsSvc := messages.NewService(sqlDB)
+
 	authHandler := api.NewAuthHandler(authSvc)
+	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc)
 
 	hub := ws.NewHub()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -101,6 +107,7 @@ func runServe(args []string) error {
 	r.Get("/health", handleHealth)
 	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
+	convsHandler.Mount(r)
 
 	srv := &http.Server{
 		Addr:              *addr,
