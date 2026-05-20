@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,7 +18,9 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	_ "modernc.org/sqlite"
+
+	server "github.com/BiffstaGaming/OreoHouse/server"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
 )
 
 const (
@@ -72,13 +73,14 @@ func runServe(args []string) error {
 	}
 
 	dbPath := filepath.Join(*dataDir, dbFilename)
-	db, err := sql.Open("sqlite", dbPath)
+	startupCtx := context.Background()
+	sqlDB, err := db.Open(startupCtx, dbPath)
 	if err != nil {
-		return fmt.Errorf("opening sqlite: %w", err)
+		return err
 	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("pinging sqlite: %w", err)
+	defer sqlDB.Close()
+	if err := db.Migrate(startupCtx, sqlDB, server.Migrations()); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
 	}
 	slog.Info("sqlite opened", "path", dbPath)
 
