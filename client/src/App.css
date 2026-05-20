@@ -1,0 +1,138 @@
+:root {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+}
+
+.phase0 {
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+.phase0 h1 {
+  margin: 0 0 0.25rem 0;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem 0;
+  opacity: 0.7;
+}
+
+section {
+  margin-bottom: 1.5rem;
+}
+
+.conn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.url-label {
+  flex: 1 1 20rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.url-label input {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+}
+
+.send label {
+  display: block;
+}
+
+.send textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  box-sizing: border-box;
+}
+
+button {
+  padding: 0.3rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.status {
+  font-family: ui-monospace, monospace;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.status-open {
+  color: #16a34a;
+}
+.status-error {
+  color: #dc2626;
+}
+.status-closed {
+  color: #6b7280;
+}
+.status-connecting {
+  color: #d97706;
+}
+
+.log ol {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 0.25rem;
+}
+
+.entry {
+  padding: 0.5rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.15);
+  display: grid;
+  grid-template-columns: 4rem 1fr;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.entry:first-child {
+  border-top: 0;
+}
+
+.entry pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.direction {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.entry-in .direction {
+  color: #2563eb;
+}
+.entry-out .direction {
+  color: #16a34a;
+}
+.entry-system .direction {
+  color: #6b7280;
+}
