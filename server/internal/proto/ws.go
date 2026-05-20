@@ -1,0 +1,67 @@
+package proto
+
+// Wire protocol type discriminators. See docs/protocol.md for the
+// canonical catalog and semantics.
+const (
+	TypeWelcome  = "welcome"
+	TypePresence = "presence"
+	TypeError    = "error"
+	TypePing     = "ping"
+	TypePong     = "pong"
+)
+
+// Presence status values for PresenceMessage.Status.
+const (
+	StatusOnline  = "online"
+	StatusOffline = "offline"
+)
+
+// Stable error codes used in ErrorMessage.Code. Clients can branch on
+// these without parsing the human-readable Message.
+const (
+	ErrCodeInvalidMessage = "invalid_message"
+	ErrCodeUnknownType    = "unknown_type"
+)
+
+// Envelope reads the type discriminator off any incoming message
+// before decoding into a concrete shape.
+type Envelope struct {
+	Type string `json:"type"`
+}
+
+// WelcomeMessage is sent server→client immediately after a successful
+// /ws upgrade. It snapshots current presence so the client can build
+// its initial UI without polling.
+type WelcomeMessage struct {
+	Type   string     `json:"type"`
+	You    UserInfo   `json:"you"`
+	Online []UserInfo `json:"online"`
+}
+
+// PresenceMessage is broadcast to every online client when a user's
+// presence flips. A user is "online" if they have ≥1 active WS
+// connection.
+type PresenceMessage struct {
+	Type   string   `json:"type"`
+	User   UserInfo `json:"user"`
+	Status string   `json:"status"` // StatusOnline or StatusOffline
+}
+
+// ErrorMessage is sent server→client immediately before a connection
+// close caused by a protocol violation. /ws auth failures are HTTP
+// 401s before the upgrade and do not produce an ErrorMessage.
+type ErrorMessage struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// PingMessage is the client's keepalive. The server replies PongMessage.
+type PingMessage struct {
+	Type string `json:"type"`
+}
+
+// PongMessage is the server's reply to PingMessage.
+type PongMessage struct {
+	Type string `json:"type"`
+}
