@@ -29,7 +29,12 @@ jobs:
         if: ${{ steps.release.outputs.release_created == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TAG: ${{ steps.release.outputs.tag_name }}
+        # gh workflow run needs to know which repo to target. Without a
+        # checkout step it can't infer one from git, so we pass --repo
+        # explicitly. (Cheaper than a full actions/checkout for two API
+        # calls.)
         run: |
-          gh workflow run build-server-image.yml --ref "$TAG"
-          gh workflow run build-windows-app.yml  --ref "$TAG"
+          gh workflow run build-server-image.yml --repo "$REPO" --ref "$TAG"
+          gh workflow run build-windows-app.yml  --repo "$REPO" --ref "$TAG"
