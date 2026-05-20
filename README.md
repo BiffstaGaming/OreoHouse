@@ -6,6 +6,15 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 Phase 0 — scaffolding done. The server boots, the client connects, and `/ws` echoes JSON. See [CLAUDE.md](CLAUDE.md) for the project mission, architecture, and roadmap, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
+## Downloads
+
+| What | Where | Version |
+|------|-------|---------|
+| Windows client (`.msi` and NSIS `.exe`) | [Releases](https://github.com/BiffstaGaming/OreoHouse/releases) | latest release |
+| Server container image | `ghcr.io/biffstagaming/oreohouse:latest` ([Packages](https://github.com/BiffstaGaming/OreoHouse/pkgs/container/oreohouse)) | `latest`, `main`, `vX.Y.Z`, `sha-<short>` |
+
+Both are produced by GitHub Actions on every tagged release — see [Versioning & releases](#versioning--releases) below.
+
 ## Prerequisites
 
 - **Go** 1.25+ (the module pins it because of `modernc.org/sqlite`'s floor; CLAUDE.md still lists 1.22+ as the project target)
@@ -92,6 +101,33 @@ The package inherits visibility from this (private) repo by default. To pull fro
 
 1. **Make the package public.** On github.com: this repo → Packages → `oreohouse` → Package settings → Change visibility → Public. After that, anyone (including Portainer with no auth) can `docker pull`.
 2. **Keep it private + authenticate.** Generate a PAT with `read:packages` scope (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token). Then in Portainer: Registries → Add registry → Custom registry, URL `ghcr.io`, username = your GitHub username, password = the PAT. Portainer will use those creds for every `ghcr.io/...` pull.
+
+## Windows client releases
+
+Pushing a `v*` or `phase-*` tag also triggers [`.github/workflows/build-windows-app.yml`](.github/workflows/build-windows-app.yml), which runs on a Windows runner, builds the Tauri MSI + NSIS installers, and attaches them to a GitHub Release named after the tag. The latest release is shown in the sidebar on the repo's main page; the full list is at [Releases](https://github.com/BiffstaGaming/OreoHouse/releases).
+
+The installers aren't code-signed (hobby project, no cert). On first launch Windows SmartScreen will warn — click **More info → Run anyway**, or right-click the downloaded file → Properties → Unblock before opening.
+
+## Versioning & releases
+
+Versioning is automated by [`release-please`](https://github.com/googleapis/release-please-action) driven by [conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, etc. — already in use here).
+
+**The flow:**
+
+1. Each push to `main` runs [`.github/workflows/release-please.yml`](.github/workflows/release-please.yml).
+2. Release-please reads conventional commits since the last release, computes the next version (pre-1.0: `feat:` bumps the minor, `fix:` bumps the patch — major bumps are gated until a manual 1.0.0 release), and opens (or updates) a "release PR" titled `chore(main): release X.Y.Z`. The PR contains the version bump for `client/package.json`, `client/src-tauri/tauri.conf.json`, `client/src-tauri/Cargo.toml`, and a generated `CHANGELOG.md`.
+3. Merging that PR pushes the new tag `vX.Y.Z` and creates a corresponding GitHub Release.
+4. The new tag triggers [`build-server-image.yml`](.github/workflows/build-server-image.yml) (pushing `ghcr.io/biffstagaming/oreohouse:vX.Y.Z` and `:latest`) and [`build-windows-app.yml`](.github/workflows/build-windows-app.yml) (attaching the MSI + NSIS installers to the Release).
+
+The current state of the next release lives at any time in the open release PR — review it like any other PR.
+
+If you ever need to cut a release outside the automation, you can push a tag directly:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Tag pushes hit the same downstream workflows; `release-please` will pick up where you left off on the next push.
 
 ## Deploying with Portainer
 
