@@ -12,6 +12,7 @@ import {
   createDM,
   createGroup,
   createRoom,
+  fileURL,
   httpToWs,
   joinRoom,
   leaveConversation,
@@ -20,9 +21,11 @@ import {
   listRooms,
   login,
   logout,
+  uploadFile,
 } from "./lib/api";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import type {
+  AttachmentView,
   ConversationView,
   MessageView,
   OutgoingMessage,
@@ -285,12 +288,13 @@ function ChatScreen({
     }
   }
 
-  function sendMessage(body: string) {
+  function sendMessage(body: string, attachmentIDs?: number[]) {
     if (view.kind !== "chat" || !wsRef.current) return;
     wsRef.current.send({
       type: "message",
       conversation_id: view.conversationID,
       body,
+      attachment_ids: attachmentIDs,
     });
   }
 
@@ -488,7 +492,7 @@ function RightPane(props: {
   conversation: ConversationView | null;
   messages: MessageView[];
   online: UserInfo[];
-  onSend: (body: string) => void;
+  onSend: (body: string, attachmentIDs?: number[]) => void;
   onLeave: (c: ConversationView) => void;
   onCancelForm: () => void;
   onGroupCreated: (c: ConversationView) => void;
@@ -499,7 +503,7 @@ function RightPane(props: {
     case "chat":
       return (
         <ChatView
-          self={props.session.user}
+          session={props.session}
           conv={props.conversation}
           messages={props.messages}
           onSend={props.onSend}
@@ -543,21 +547,35 @@ function RightPane(props: {
 
 // --- Chat view --------------------------------------------------------
 
+type PendingAttachment =
+  | { kind: "uploading"; localID: string; filename: string }
+  | { kind: "ready"; localID: string; view: AttachmentView }
+  | { kind: "error"; localID: string; filename: string; error: string };
+
 function ChatView({
-  self,
+  session,
   conv,
   messages,
   onSend,
   onLeave,
 }: {
-  self: UserInfo;
+  session: Session;
   conv: ConversationView | null;
   messages: MessageView[];
-  onSend: (body: string) => void;
+  onSend: (body: string, attachmentIDs?: number[]) => void;
   onLeave: (c: ConversationView) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reset draft + pending when switching conversations so attachments
+  // staged in one chat don't leak to another.
+  useEffect(() => {
+    setDraft("");
+    setPending([]);
+  }, [conv?.id]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -572,14 +590,58 @@ function ChatView({
     );
   }
 
+  const self = session.user;
   const title = conversationTitle(conv, self.id);
   const subtitle = conversationSubtitle(conv, self.id);
 
+  const uploading = pending.some((p) => p.kind === "uploading");
+  const readyIDs = pending
+    .filter((p): p is { kind: "ready"; localID: string; view: AttachmentView } => p.kind === "ready")
+    .map((p) => p.view.id);
+
+  async function handleFiles(files: FileList) {
+    for (const file of Array.from(files)) {
+      const localID = cryptoRandomID();
+      setPending((p) => [
+        ...p,
+        { kind: "uploading", localID, filename: file.name },
+      ]);
+      try {
+        const view = await uploadFile(session.serverUrl, session.token, file);
+        setPending((p) =>
+          p.map((x) =>
+            x.localID === localID ? { kind: "ready", localID, view } : x,
+          ),
+        );
+      } catch (err) {
+        setPending((p) =>
+          p.map((x) =>
+            x.localID === localID
+              ? {
+                  kind: "error",
+                  localID,
+                  filename: file.name,
+                  error: (err as Error).message,
+                }
+              : x,
+          ),
+        );
+      }
+    }
+  }
+
+  function removePending(localID: string) {
+    setPending((p) => p.filter((x) => x.localID !== localID));
+  }
+
   function trySend() {
     const body = draft.trim();
-    if (!body) return;
-    onSend(body);
+    if (!body && readyIDs.length === 0) return;
+    if (uploading) return; // wait for uploads
+    onSend(body, readyIDs.length > 0 ? readyIDs : undefined);
     setDraft("");
+    // Clear ready+error; uploads in-flight (if any) stay.
+    setPending((p) => p.filter((x) => x.kind === "uploading"));
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -612,9 +674,22 @@ function ChatView({
         {messages.length === 0 ? (
           <p className="empty">No messages yet — say hi.</p>
         ) : (
-          messages.map((m) => <MessageRow key={m.id} m={m} self={self} />)
+          messages.map((m) => (
+            <MessageRow key={m.id} m={m} session={session} />
+          ))
         )}
       </div>
+      {pending.length > 0 && (
+        <div className="composer-pending">
+          {pending.map((p) => (
+            <PendingChip
+              key={p.localID}
+              attachment={p}
+              onRemove={() => removePending(p.localID)}
+            />
+          ))}
+        </div>
+      )}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -623,6 +698,26 @@ function ChatView({
         }}
       >
         <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files) {
+              void handleFiles(e.target.files);
+              e.target.value = ""; // allow re-picking same file
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="composer-attach"
+          onClick={() => fileInputRef.current?.click()}
+          title="Attach a file"
+        >
+          📎
+        </button>
+        <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
@@ -630,25 +725,132 @@ function ChatView({
           maxLength={4096}
           autoComplete="off"
         />
-        <button type="submit" disabled={!draft.trim()}>
-          Send
+        <button
+          type="submit"
+          disabled={uploading || (!draft.trim() && readyIDs.length === 0)}
+        >
+          {uploading ? "Uploading…" : "Send"}
         </button>
       </form>
     </section>
   );
 }
 
-function MessageRow({ m, self }: { m: MessageView; self: UserInfo }) {
-  const mine = m.sender.id === self.id;
+function PendingChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: PendingAttachment;
+  onRemove: () => void;
+}) {
+  let label: string;
+  let cls: string;
+  switch (attachment.kind) {
+    case "uploading":
+      label = `Uploading ${attachment.filename}…`;
+      cls = "chip-uploading";
+      break;
+    case "ready":
+      label = `${attachment.view.filename} (${formatBytes(attachment.view.size_bytes)})`;
+      cls = "chip-ready";
+      break;
+    case "error":
+      label = `Failed: ${attachment.filename} — ${attachment.error}`;
+      cls = "chip-error";
+      break;
+  }
+  return (
+    <span className={`chip ${cls}`}>
+      <span>{label}</span>
+      <button type="button" onClick={onRemove} title="Remove">
+        ×
+      </button>
+    </span>
+  );
+}
+
+function MessageRow({
+  m,
+  session,
+}: {
+  m: MessageView;
+  session: Session;
+}) {
+  const mine = m.sender.id === session.user.id;
   return (
     <div className={`msg ${mine ? "msg-mine" : ""}`}>
       <div className="msg-meta">
-        <span className="msg-sender">{mine ? "you" : m.sender.username}</span>
+        <span className="msg-sender">
+          {mine ? "you" : m.sender.username}
+        </span>
         <span className="msg-time">{formatTime(m.created_at)}</span>
       </div>
-      <div className="msg-body">{m.body}</div>
+      {m.body && <div className="msg-body">{m.body}</div>}
+      {m.attachments && m.attachments.length > 0 && (
+        <div className="msg-attachments">
+          {m.attachments.map((a) => (
+            <AttachmentRender key={a.id} a={a} session={session} />
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function AttachmentRender({
+  a,
+  session,
+}: {
+  a: AttachmentView;
+  session: Session;
+}) {
+  const url = fileURL(session.serverUrl, session.token, a.id);
+  if (a.mime_type.startsWith("image/")) {
+    return (
+      <a
+        className="msg-image-link"
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
+      >
+        <img
+          className="msg-image"
+          src={url}
+          alt={a.filename}
+          loading="lazy"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      className="msg-file"
+      href={url}
+      download={a.filename}
+      title={a.filename}
+    >
+      <span className="msg-file-icon">📎</span>
+      <span className="msg-file-name">{a.filename}</span>
+      <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
+    </a>
+  );
+}
+
+function cryptoRandomID(): string {
+  // crypto.randomUUID exists in modern WebViews; fall back to a
+  // counter-ish string otherwise.
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 // --- New Group form ---------------------------------------------------

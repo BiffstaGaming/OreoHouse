@@ -1,4 +1,5 @@
 import type {
+  AttachmentView,
   ConversationView,
   CreateDMRequest,
   CreateGroupRequest,
@@ -178,6 +179,48 @@ export async function joinRoom(
     `/api/rooms/${roomID}/join`,
     {},
   );
+}
+
+// uploadFile POSTs /api/uploads as multipart/form-data and returns
+// the new AttachmentView. The returned id can be embedded in a
+// subsequent WS message's attachment_ids[].
+export async function uploadFile(
+  serverUrl: string,
+  token: string,
+  file: File,
+): Promise<AttachmentView> {
+  const url = new URL("/api/uploads", serverUrl);
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const resp = await fetch(url.toString(), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try {
+      const body = (await resp.json()) as ErrorResponse;
+      if (body.error) msg = body.error;
+    } catch {
+      /* keep fallback */
+    }
+    throw new Error(msg);
+  }
+  return (await resp.json()) as AttachmentView;
+}
+
+// fileURL builds the GET /api/files/{id} URL with the session token
+// as a query parameter — needed for <img src> and <a href download>
+// since neither can set an Authorization header.
+export function fileURL(
+  serverUrl: string,
+  token: string,
+  attachmentID: number,
+): string {
+  const url = new URL(`/api/files/${attachmentID}`, serverUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 // listMessages GETs /api/conversations/{id}/messages with cursor
