@@ -71,6 +71,8 @@ import type {
   UserState,
 } from "./types/proto";
 
+import logoUrl from "./assets/logo.png";
+
 import "./App.css";
 
 type Session = SessionSnapshot;
@@ -167,7 +169,7 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
 
   return (
     <main className="phase6 login-screen">
-      <h1>OreoHouse</h1>
+      <img className="login-logo" src={logoUrl} alt="Oreo House" />
       <p className="subtitle">Sign in to your family server.</p>
       <form className="login-form" onSubmit={handleSubmit}>
         <label>
