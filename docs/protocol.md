@@ -84,6 +84,44 @@ Broadcast to every member of a conversation (including the sender) whenever some
 
 `id` is a monotonically increasing 64-bit integer assigned by the server. Clients can use it both as a stable identifier (for dedup) and as a cursor for paginating history via `GET /api/conversations/{id}/messages?before=<id>`.
 
+#### `conversation_added`
+
+Pushed to a user the moment they're added to a new conversation (created in a group / invited to a group / joined a room). Carries the full conversation view so the client can drop it into its list without an extra REST round-trip.
+
+```json
+{
+  "type": "conversation_added",
+  "conversation": {
+    "id": 12,
+    "type": "group",
+    "name": "Family",
+    "created_at": "...",
+    "members": [
+      { "id": 1, "username": "alice", "created_at": "..." },
+      { "id": 2, "username": "bob",   "created_at": "..." }
+    ]
+  }
+}
+```
+
+#### `conversation_members_changed`
+
+Pushed to the *existing* members of a conversation whenever its membership changes (someone added, someone left). Carries the new full member list — clients should replace, not diff.
+
+```json
+{
+  "type": "conversation_members_changed",
+  "conversation_id": 12,
+  "members": [
+    { "id": 1, "username": "alice", "created_at": "..." },
+    { "id": 2, "username": "bob",   "created_at": "..." },
+    { "id": 3, "username": "carol", "created_at": "..." }
+  ]
+}
+```
+
+A user who is themselves the change-target — the joiner / new invitee — gets `conversation_added` instead and does not receive a parallel `conversation_members_changed` for the same event.
+
 #### `error`
 
 Sent right before the server closes a connection due to a protocol violation mid-stream. Auth failures on `/ws?token=` are reported as HTTP 401 *before* the upgrade and don't produce an `error` message. The connection is NOT closed for application-level errors raised by client `message` events (e.g. body too long, not a member) — those just emit an `error` and let the client retry.
