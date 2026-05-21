@@ -12,6 +12,7 @@ const (
 	TypeConversationAdded          = "conversation_added"
 	TypeConversationMembersChanged = "conversation_members_changed"
 	TypeStatus                     = "status"
+	TypeTyping                     = "typing"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -90,6 +91,25 @@ type StatusMessage struct {
 	Type       string `json:"type"`
 	State      string `json:"state"`
 	CustomText string `json:"custom_text"`
+}
+
+// IncomingTypingMessage is client→server: I'm typing in this
+// conversation. The server fans out a TypingMessage to every other
+// member. Clients should throttle these (~one every 2 seconds while
+// actively typing).
+type IncomingTypingMessage struct {
+	Type           string `json:"type"`
+	ConversationID int64  `json:"conversation_id"`
+}
+
+// TypingMessage is server→other-members for a typing event. Clients
+// treat each one as "this user is typing for the next ~5 s"; the
+// indicator expires on a timer rather than via an explicit
+// stop-typing event.
+type TypingMessage struct {
+	Type           string   `json:"type"`
+	ConversationID int64    `json:"conversation_id"`
+	User           UserInfo `json:"user"`
 }
 
 // ErrorMessage is sent server→client immediately before a connection

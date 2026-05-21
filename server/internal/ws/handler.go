@@ -225,11 +225,56 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleIncomingMessage(ctx, c, data)
 		case proto.TypeStatus:
 			h.handleStatus(ctx, c, data)
+		case proto.TypeTyping:
+			h.handleTyping(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
 		}
 	}
+}
+
+// handleTyping fans a typing event out to every other member of the
+// target conversation. The server doesn't persist or rate-limit
+// these — that's the client's job (~one event per 2 s).
+func (h *Handler) handleTyping(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingTypingMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		// Silent on malformed typing — it's a UX signal, not worth
+		// surfacing as an error.
+		return
+	}
+	if in.ConversationID <= 0 {
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, in.ConversationID, c.user.ID)
+	if err != nil || !ok {
+		return
+	}
+	members, err := h.convs.Members(ctx, in.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.TypingMessage{
+		Type:           proto.TypeTyping,
+		ConversationID: in.ConversationID,
+		User: proto.UserInfo{
+			ID:       c.user.ID,
+			Username: c.user.Username,
+		},
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	otherIDs := make([]int64, 0, len(members)-1)
+	for _, m := range members {
+		if m.UserID == c.user.ID {
+			continue
+		}
+		otherIDs = append(otherIDs, m.UserID)
+	}
+	h.hub.SendToUsers(b, otherIDs)
 }
 
 // handleStatus updates the sender's discrete state and custom text.

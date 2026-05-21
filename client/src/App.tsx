@@ -67,6 +67,8 @@ const HISTORY_PAGE_SIZE = 50;
 const WINDOW_SPAWN_BASE = { x: 90, y: 70 };
 const WINDOW_DEFAULT_SIZE = { w: 380, h: 460 };
 const WINDOW_MIN_VISIBLE = 80; // keep at least this many px on-screen when dragging
+const TYPING_SEND_THROTTLE_MS = 2000; // outgoing typing events
+const TYPING_EXPIRY_MS = 5000; // how long an incoming typing indicator sticks
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -173,6 +175,12 @@ function ChatScreen({
   const [unreadByConv, setUnreadByConv] = useState<Map<number, number>>(
     new Map(),
   );
+  // Per-conversation typing indicators. Inner map: user_id →
+  // {username, expiresAt}. Entries expire after TYPING_EXPIRY_MS via
+  // the interval below.
+  const [typing, setTyping] = useState<
+    Map<number, Map<number, { username: string; expiresAt: number }>>
+  >(new Map());
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -256,6 +264,21 @@ function ChatScreen({
         setConversations((prev) => {
           const out = new Map(prev);
           out.set(msg.conversation.id, msg.conversation);
+          return out;
+        });
+        return;
+      case "typing":
+        // Don't show our own echoes (server already filters but be
+        // defensive against future protocol changes).
+        if (msg.user.id === session.user.id) return;
+        setTyping((prev) => {
+          const out = new Map(prev);
+          const inner = new Map(out.get(msg.conversation_id) ?? new Map());
+          inner.set(msg.user.id, {
+            username: msg.user.username,
+            expiresAt: Date.now() + TYPING_EXPIRY_MS,
+          });
+          out.set(msg.conversation_id, inner);
           return out;
         });
         return;
@@ -452,6 +475,14 @@ function ChatScreen({
     });
   }
 
+  function sendTyping(convID: number) {
+    if (!wsRef.current) return;
+    wsRef.current.send({
+      type: "typing",
+      conversation_id: convID,
+    });
+  }
+
   function updateStatus(state: UserState, customText: string) {
     if (state === "offline") return; // server rejects this
     setMyState(state);
@@ -489,6 +520,35 @@ function ChatScreen({
     await logout(session.serverUrl, session.token);
     onSignOut();
   }
+
+  // Expire stale typing indicators once a second. Done as a single
+  // global tick rather than per-conversation timers so we don't fan
+  // out timers on every keystroke.
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      setTyping((prev) => {
+        let dirty = false;
+        const out = new Map(prev);
+        for (const [convID, inner] of prev.entries()) {
+          const nextInner = new Map(inner);
+          for (const [uid, entry] of inner.entries()) {
+            if (entry.expiresAt <= now) {
+              nextInner.delete(uid);
+              dirty = true;
+            }
+          }
+          if (nextInner.size === 0) {
+            out.delete(convID);
+          } else {
+            out.set(convID, nextInner);
+          }
+        }
+        return dirty ? out : prev;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Total unread across every conversation — prefixed onto the OS
   // window title MSN-style so the count shows in the taskbar.
@@ -550,6 +610,9 @@ function ChatScreen({
       <div className="windows-layer">
         {openWindowEntries.map(([convID, state]) => {
           const conv = conversations.get(convID)!;
+          const typers = Array.from(
+            (typing.get(convID) ?? new Map()).values(),
+          ) as { username: string; expiresAt: number }[];
           return (
             <ChatWindow
               key={convID}
@@ -557,11 +620,13 @@ function ChatScreen({
               conv={conv}
               state={state}
               messages={messages.get(convID) ?? []}
+              typers={typers}
               onMove={(p) => setConvWindowPos(convID, p)}
               onClose={() => closeConvWindow(convID)}
               onMinimize={() => minimizeConvWindow(convID)}
               onFocus={() => bringToFront(convID)}
               onSend={(body, atts) => sendMessage(convID, body, atts)}
+              onTyping={() => sendTyping(convID)}
               onLeave={() => handleLeave(conv)}
             />
           );
@@ -911,22 +976,26 @@ function ChatWindow({
   conv,
   state,
   messages,
+  typers,
   onMove,
   onClose,
   onMinimize,
   onFocus,
   onSend,
+  onTyping,
   onLeave,
 }: {
   session: Session;
   conv: ConversationView;
   state: ChatWindowState;
   messages: MessageView[];
+  typers: { username: string; expiresAt: number }[];
   onMove: (pos: { x: number; y: number }) => void;
   onClose: () => void;
   onMinimize: () => void;
   onFocus: () => void;
   onSend: (body: string, attachmentIDs?: number[]) => void;
+  onTyping: () => void;
   onLeave: () => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -935,6 +1004,7 @@ function ChatWindow({
   const dragRef = useRef({ startX: 0, startY: 0, startPosX: 0, startPosY: 0 });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastTypingSentAt = useRef(0);
 
   // Scroll to bottom whenever new messages arrive in this window.
   useEffect(() => {
@@ -1105,6 +1175,11 @@ function ChatWindow({
           ))
         )}
       </div>
+      {typers.length > 0 && (
+        <div className="typing-indicator">
+          {formatTypers(typers.map((t) => t.username))} typing…
+        </div>
+      )}
       {pending.length > 0 && (
         <div className="composer-pending">
           {pending.map((p) => (
@@ -1145,7 +1220,16 @@ function ChatWindow({
         </button>
         <input
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (e.target.value !== "") {
+              const now = Date.now();
+              if (now - lastTypingSentAt.current >= TYPING_SEND_THROTTLE_MS) {
+                lastTypingSentAt.current = now;
+                onTyping();
+              }
+            }
+          }}
           onKeyDown={onKeyDown}
           placeholder="Type a message — Enter to send"
           maxLength={4096}
@@ -1673,4 +1757,11 @@ function formatBytes(n: number): string {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function formatTypers(names: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return `${names[0]} is`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are`;
+  return `${names[0]}, ${names[1]}, and ${names.length - 2} more are`;
 }

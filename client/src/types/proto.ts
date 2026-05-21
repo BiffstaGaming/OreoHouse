@@ -86,6 +86,22 @@ export interface StatusMessage {
   custom_text: string;
 }
 
+// Client→server: I'm typing in this conversation. Throttle to ~one
+// event every 2 seconds while actively typing.
+export interface IncomingTypingMessage {
+  type: "typing";
+  conversation_id: number;
+}
+
+// Server→other-members of a conversation: this user is typing.
+// Clients should expire the indicator after ~5s with no further
+// events.
+export interface TypingMessage {
+  type: "typing";
+  conversation_id: number;
+  user: UserInfo;
+}
+
 export interface WSErrorMessage {
   type: "error";
   code: string;
@@ -143,9 +159,14 @@ export type ServerMessage =
   | PongMessage
   | OutgoingMessage
   | ConversationAddedMessage
-  | ConversationMembersChangedMessage;
+  | ConversationMembersChangedMessage
+  | TypingMessage;
 
-export type ClientMessage = PingMessage | IncomingMessage | StatusMessage;
+export type ClientMessage =
+  | PingMessage
+  | IncomingMessage
+  | StatusMessage
+  | IncomingTypingMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 
