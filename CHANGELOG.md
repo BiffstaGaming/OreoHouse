@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.7.0...v0.8.0) (2026-05-21)
+
+
+### Features
+
+* **client:** native OS sub-windows per chat, with resize + per-conv geometry ([08204e7](https://github.com/BiffstaGaming/OreoHouse/commit/08204e72c3ce03cca09f6feed7442268b372d8d4))
+* **client:** persist session across launches + hide page-level scrollbar ([20aaccc](https://github.com/BiffstaGaming/OreoHouse/commit/20aaccce63a984f3cd17bebed607034ab364b5aa))
+
 ## [0.7.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.6.0...v0.7.0) (2026-05-21)
 
 
