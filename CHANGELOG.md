@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.16.1...v0.17.0) (2026-05-21)
+
+
+### Features
+
+* **web:** full feature parity with desktop client ([db25250](https://github.com/BiffstaGaming/OreoHouse/commit/db252507d7a18fb310a467f9223014d8c76480bd))
+* **web:** full feature parity with desktop client ([52dbd9b](https://github.com/BiffstaGaming/OreoHouse/commit/52dbd9b700daf1e8a91cf32b3a8019f967c538ca))
+
 ## [0.16.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.16.0...v0.16.1) (2026-05-21)
 
 
