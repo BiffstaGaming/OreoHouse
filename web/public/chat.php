@@ -29,7 +29,7 @@ $bootstrap = [
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>OreoHouse</title>
-<link rel="stylesheet" href="/assets/css/style.css" />
+<link rel="stylesheet" href="<?= htmlspecialchars(oreo_asset('/assets/css/style.css')) ?>" />
 </head>
 <body class="chat-body">
 <div id="app">
@@ -40,9 +40,9 @@ $bootstrap = [
 <script>
     window.OREO = <?= json_encode($bootstrap, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) ?>;
 </script>
-<script src="/assets/js/api.js"></script>
-<script src="/assets/js/ws.js"></script>
-<script src="/assets/js/ui.js"></script>
-<script src="/assets/js/app.js"></script>
+<script src="<?= htmlspecialchars(oreo_asset('/assets/js/api.js')) ?>"></script>
+<script src="<?= htmlspecialchars(oreo_asset('/assets/js/ws.js')) ?>"></script>
+<script src="<?= htmlspecialchars(oreo_asset('/assets/js/ui.js')) ?>"></script>
+<script src="<?= htmlspecialchars(oreo_asset('/assets/js/app.js')) ?>"></script>
 </body>
 </html>

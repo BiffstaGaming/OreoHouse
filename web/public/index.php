@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>OreoHouse — Sign in</title>
-<link rel="stylesheet" href="/assets/css/style.css" />
+<link rel="stylesheet" href="<?= htmlspecialchars(oreo_asset('/assets/css/style.css')) ?>" />
 </head>
 <body class="login-body">
 <main class="login-card">
