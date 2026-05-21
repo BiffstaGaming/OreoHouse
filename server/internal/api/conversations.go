@@ -20,22 +20,40 @@ import (
 // requests we accept are tiny.
 const maxConvBodyBytes = 4 << 10
 
+// Broadcaster is the minimal hub interface this handler uses to push
+// membership events. *ws.Hub satisfies it; tests can pass a fake.
+type Broadcaster interface {
+	SendToUsers(msg []byte, userIDs []int64) []int64
+}
+
+// noopBroadcaster is what we install when the handler is constructed
+// without a hub (e.g. some tests). It silently drops events.
+type noopBroadcaster struct{}
+
+func (noopBroadcaster) SendToUsers(_ []byte, _ []int64) []int64 { return nil }
+
 // ConversationsHandler serves /api/conversations/* endpoints. Construct
 // via NewConversationsHandler.
 type ConversationsHandler struct {
 	auth     *auth.Service
 	convs    *conversations.Service
 	messages *messages.Service
+	hub      Broadcaster
 }
 
 // NewConversationsHandler wires the three services together. auth is
-// used by the requireAuth middleware.
+// used by the requireAuth middleware. hub may be nil for tests that
+// don't care about WS-side broadcasting.
 func NewConversationsHandler(
 	authSvc *auth.Service,
 	convsSvc *conversations.Service,
 	msgsSvc *messages.Service,
+	hub Broadcaster,
 ) *ConversationsHandler {
-	return &ConversationsHandler{auth: authSvc, convs: convsSvc, messages: msgsSvc}
+	if hub == nil {
+		hub = noopBroadcaster{}
+	}
+	return &ConversationsHandler{auth: authSvc, convs: convsSvc, messages: msgsSvc, hub: hub}
 }
 
 // Mount registers the /api/conversations/* and /api/rooms/* routes,
@@ -199,6 +217,10 @@ func (h *ConversationsHandler) createGroup(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// All members are new (the group is brand new) → push
+	// conversation_added to every member. No members_changed because
+	// nobody had this conversation before.
+	h.pushConversationAdded(views[0], memberIDs(views[0]))
 	writeJSON(w, http.StatusOK, views[0])
 }
 
@@ -229,6 +251,7 @@ func (h *ConversationsHandler) createRoom(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.pushConversationAdded(views[0], []int64{me.ID})
 	writeJSON(w, http.StatusOK, views[0])
 }
 
@@ -270,6 +293,19 @@ func (h *ConversationsHandler) addMembers(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "user_ids is required")
 		return
 	}
+
+	// Snapshot the existing membership so we can tell new vs old.
+	before, err := h.convs.Members(r.Context(), conv.ID)
+	if err != nil {
+		slog.Error("members before snapshot failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	beforeIDs := make(map[int64]bool, len(before))
+	for _, m := range before {
+		beforeIDs[m.UserID] = true
+	}
+
 	for _, uid := range req.UserIDs {
 		if err := h.convs.AddMember(r.Context(), conv.ID, uid); err != nil {
 			slog.Error("AddMember failed", "error", err, "conv_id", conv.ID, "user_id", uid)
@@ -283,7 +319,22 @@ func (h *ConversationsHandler) addMembers(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, views[0])
+	view := views[0]
+
+	// Newly-added (not in before snapshot) → conversation_added.
+	// Pre-existing → conversation_members_changed.
+	var newUsers, oldUsers []int64
+	for _, m := range view.Members {
+		if beforeIDs[m.ID] {
+			oldUsers = append(oldUsers, m.ID)
+		} else {
+			newUsers = append(newUsers, m.ID)
+		}
+	}
+	h.pushConversationAdded(view, newUsers)
+	h.pushMembersChanged(view, oldUsers)
+
+	writeJSON(w, http.StatusOK, view)
 }
 
 // leave handles POST /api/conversations/{id}/leave. DMs can't be left.
@@ -316,6 +367,13 @@ func (h *ConversationsHandler) leave(w http.ResponseWriter, r *http.Request) {
 		slog.Error("RemoveMember failed", "error", err, "conv_id", conv.ID)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// Tell whoever's left about the new member list.
+	views, err := h.toViews(r, []conversations.Conversation{conv})
+	if err == nil {
+		view := views[0]
+		h.pushMembersChanged(view, memberIDs(view))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -364,6 +422,24 @@ func (h *ConversationsHandler) joinRoom(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusBadRequest, "conversation is not a room")
 		return
 	}
+
+	// Snapshot members before join so we can tell whether this is a
+	// new membership (push conversation_added) or a re-join (no-op
+	// for events).
+	before, err := h.convs.Members(r.Context(), conv.ID)
+	if err != nil {
+		slog.Error("joinRoom members snapshot failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	wasMember := false
+	for _, m := range before {
+		if m.UserID == me.ID {
+			wasMember = true
+			break
+		}
+	}
+
 	if err := h.convs.AddMember(r.Context(), conv.ID, me.ID); err != nil {
 		slog.Error("AddMember (join) failed", "error", err, "room_id", conv.ID)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
@@ -374,7 +450,63 @@ func (h *ConversationsHandler) joinRoom(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, views[0])
+	view := views[0]
+
+	if !wasMember {
+		h.pushConversationAdded(view, []int64{me.ID})
+		oldIDs := make([]int64, 0, len(before))
+		for _, m := range before {
+			oldIDs = append(oldIDs, m.UserID)
+		}
+		h.pushMembersChanged(view, oldIDs)
+	}
+
+	writeJSON(w, http.StatusOK, view)
+}
+
+// pushConversationAdded marshals a conversation_added envelope and
+// hands it to the hub, scoped to userIDs. No-op if userIDs is empty.
+func (h *ConversationsHandler) pushConversationAdded(view proto.ConversationView, userIDs []int64) {
+	if len(userIDs) == 0 {
+		return
+	}
+	msg := proto.ConversationAddedMessage{
+		Type:         proto.TypeConversationAdded,
+		Conversation: view,
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("marshal conversation_added failed", "error", err)
+		return
+	}
+	h.hub.SendToUsers(b, userIDs)
+}
+
+// pushMembersChanged marshals a conversation_members_changed envelope
+// and sends it to userIDs. No-op if userIDs is empty.
+func (h *ConversationsHandler) pushMembersChanged(view proto.ConversationView, userIDs []int64) {
+	if len(userIDs) == 0 {
+		return
+	}
+	msg := proto.ConversationMembersChangedMessage{
+		Type:           proto.TypeConversationMembersChanged,
+		ConversationID: view.ID,
+		Members:        view.Members,
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("marshal members_changed failed", "error", err)
+		return
+	}
+	h.hub.SendToUsers(b, userIDs)
+}
+
+func memberIDs(view proto.ConversationView) []int64 {
+	out := make([]int64, len(view.Members))
+	for i, m := range view.Members {
+		out[i] = m.ID
+	}
+	return out
 }
 
 // requireMembership writes a 404 and returns a non-nil error if the

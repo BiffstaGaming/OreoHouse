@@ -3,12 +3,14 @@ package proto
 // Wire protocol type discriminators. See docs/protocol.md for the
 // canonical catalog and semantics.
 const (
-	TypeWelcome  = "welcome"
-	TypePresence = "presence"
-	TypeError    = "error"
-	TypePing     = "ping"
-	TypePong     = "pong"
-	TypeMessage  = "message"
+	TypeWelcome                    = "welcome"
+	TypePresence                   = "presence"
+	TypeError                      = "error"
+	TypePing                       = "ping"
+	TypePong                       = "pong"
+	TypeMessage                    = "message"
+	TypeConversationAdded          = "conversation_added"
+	TypeConversationMembersChanged = "conversation_members_changed"
 )
 
 // Presence status values for PresenceMessage.Status.
@@ -85,4 +87,23 @@ type OutgoingMessage struct {
 	Sender         UserInfo `json:"sender"`
 	Body           string   `json:"body"`
 	CreatedAt      string   `json:"created_at"`
+}
+
+// ConversationAddedMessage is pushed to a user when they're added to
+// a new conversation (group create / group invite / room join). Carries
+// the full ConversationView so the client can put it in its list
+// without an extra round-trip.
+type ConversationAddedMessage struct {
+	Type         string           `json:"type"`
+	Conversation ConversationView `json:"conversation"`
+}
+
+// ConversationMembersChangedMessage is pushed to existing members of a
+// conversation when its membership changes (someone added, someone
+// left). Carries the new full member list — clients replace rather
+// than diff.
+type ConversationMembersChangedMessage struct {
+	Type           string     `json:"type"`
+	ConversationID int64      `json:"conversation_id"`
+	Members        []UserInfo `json:"members"`
 }

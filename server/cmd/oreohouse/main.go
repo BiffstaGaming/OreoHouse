@@ -95,12 +95,13 @@ func runServe(args []string) error {
 	msgsSvc := messages.NewService(sqlDB)
 
 	authHandler := api.NewAuthHandler(authSvc)
-	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc)
 
 	hub := ws.NewHub()
+	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, hub)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)
+
 	wsHandler := ws.NewHandler(hub, authSvc, convsSvc, msgsSvc)
 
 	r := chi.NewRouter()

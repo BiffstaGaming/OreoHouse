@@ -36,6 +36,8 @@ export const MessageType = {
   Ping: "ping",
   Pong: "pong",
   Message: "message",
+  ConversationAdded: "conversation_added",
+  ConversationMembersChanged: "conversation_members_changed",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -91,12 +93,28 @@ export interface IncomingMessage {
   body: string;
 }
 
+// Pushed to a user when they're added to a new conversation.
+export interface ConversationAddedMessage {
+  type: "conversation_added";
+  conversation: ConversationView;
+}
+
+// Pushed to existing members when a conversation's membership changes.
+// Carries the new full member list — replace, don't diff.
+export interface ConversationMembersChangedMessage {
+  type: "conversation_members_changed";
+  conversation_id: number;
+  members: UserInfo[];
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | PresenceMessage
   | WSErrorMessage
   | PongMessage
-  | OutgoingMessage;
+  | OutgoingMessage
+  | ConversationAddedMessage
+  | ConversationMembersChangedMessage;
 
 export type ClientMessage = PingMessage | IncomingMessage;
 
