@@ -249,6 +249,8 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleNudge(ctx, c, data)
 		case proto.TypeRead:
 			h.handleRead(ctx, c, data)
+		case proto.TypeReact:
+			h.handleReact(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
@@ -280,10 +282,7 @@ func (h *Handler) handleTyping(ctx context.Context, c *Client, raw []byte) {
 	out := proto.TypingMessage{
 		Type:           proto.TypeTyping,
 		ConversationID: in.ConversationID,
-		User: proto.UserInfo{
-			ID:       c.user.ID,
-			Username: c.user.Username,
-		},
+		User:           userToInfo(c.user),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -328,10 +327,7 @@ func (h *Handler) handleNudge(ctx context.Context, c *Client, raw []byte) {
 	out := proto.NudgeMessage{
 		Type:           proto.TypeNudge,
 		ConversationID: in.ConversationID,
-		Sender: proto.UserInfo{
-			ID:       c.user.ID,
-			Username: c.user.Username,
-		},
+		Sender:         userToInfo(c.user),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -396,6 +392,66 @@ func (h *Handler) handleRead(ctx context.Context, c *Client, raw []byte) {
 		otherIDs = append(otherIDs, m.UserID)
 	}
 	h.hub.SendToUsers(b, otherIDs)
+}
+
+// handleReact toggles a reaction on a message and, on success,
+// broadcasts a reaction event to every member of the message's
+// conversation. The sender's own UI updates from the echo (one path
+// for all renders).
+func (h *Handler) handleReact(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingReactMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid react body")
+		return
+	}
+	if in.MessageID <= 0 || in.Emoji == "" {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "message_id and emoji are required")
+		return
+	}
+	msg, err := h.messages.Get(ctx, in.MessageID)
+	if errors.Is(err, messages.ErrNotFound) {
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "message not found")
+		return
+	}
+	if err != nil {
+		slog.Error("ws: react message lookup failed", "error", err)
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, msg.ConversationID, c.user.ID)
+	if err != nil || !ok {
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "not a member of conversation")
+		return
+	}
+	action, err := h.messages.ToggleReaction(ctx, in.MessageID, c.user.ID, in.Emoji)
+	if errors.Is(err, messages.ErrEmojiTooLong) {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, err.Error())
+		return
+	}
+	if err != nil {
+		slog.Error("ws: toggle reaction failed", "error", err)
+		return
+	}
+	members, err := h.convs.Members(ctx, msg.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.ReactionMessage{
+		Type:           proto.TypeReaction,
+		MessageID:      in.MessageID,
+		ConversationID: msg.ConversationID,
+		User:           userToInfo(c.user),
+		Emoji:          in.Emoji,
+		Action:         string(action),
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	memberIDs := make([]int64, 0, len(members))
+	for _, m := range members {
+		memberIDs = append(memberIDs, m.UserID)
+	}
+	h.hub.SendToUsers(b, memberIDs)
 }
 
 // handleStatus updates the sender's discrete state and custom text.
@@ -517,13 +573,10 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		Type:           proto.TypeMessage,
 		ID:             persisted.ID,
 		ConversationID: persisted.ConversationID,
-		Sender: proto.UserInfo{
-			ID:       c.user.ID,
-			Username: c.user.Username,
-		},
-		Body:        persisted.Body,
-		CreatedAt:   persisted.CreatedAt.UTC().Format(time.RFC3339Nano),
-		Attachments: attachmentsToViews(preValidated),
+		Sender:         userToInfo(c.user),
+		Body:           persisted.Body,
+		CreatedAt:      persisted.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Attachments:    attachmentsToViews(preValidated),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -695,9 +748,11 @@ func (h *Handler) sendErrorAsync(c *Client, code, message string) {
 
 func userToInfo(u auth.User) proto.UserInfo {
 	return proto.UserInfo{
-		ID:        u.ID,
-		Username:  u.Username,
-		CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ID:          u.ID,
+		Username:    u.Username,
+		CreatedAt:   u.CreatedAt.UTC().Format(time.RFC3339Nano),
+		DisplayName: u.DisplayName,
+		HasAvatar:   u.AvatarAttachmentID > 0,
 	}
 }
 

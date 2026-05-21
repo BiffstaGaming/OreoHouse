@@ -16,6 +16,9 @@ const (
 	TypeNudge                      = "nudge"
 	TypeRead                       = "read"
 	TypeReadReceipt                = "read_receipt"
+	TypeUserProfileChanged         = "user_profile_changed"
+	TypeReact                      = "react"
+	TypeReaction                   = "reaction"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -183,6 +186,7 @@ type OutgoingMessage struct {
 	Body           string           `json:"body"`
 	CreatedAt      string           `json:"created_at"`
 	Attachments    []AttachmentView `json:"attachments,omitempty"`
+	Reactions      []ReactionGroup  `json:"reactions,omitempty"`
 }
 
 // ConversationAddedMessage is pushed to a user when they're added to
@@ -225,4 +229,35 @@ type ReadReceiptMessage struct {
 	User              UserInfo `json:"user"`
 	LastReadMessageID int64    `json:"last_read_message_id"`
 	At                string   `json:"at"`
+}
+
+// UserProfileChangedMessage is broadcast to every connected client
+// whenever a user updates their display_name or avatar. Carries the
+// freshly-loaded UserInfo so clients can swap their cached copy in
+// one operation.
+type UserProfileChangedMessage struct {
+	Type string   `json:"type"`
+	User UserInfo `json:"user"`
+}
+
+// IncomingReactMessage is the client→server "react" envelope. The
+// server toggles the (message, user, emoji) row and broadcasts a
+// ReactionMessage with action: "add" | "remove" to every member of
+// the message's conversation.
+type IncomingReactMessage struct {
+	Type      string `json:"type"`
+	MessageID int64  `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
+// ReactionMessage is server→all-members for a reaction toggle. Action
+// is "add" or "remove" so clients can update their per-message
+// reaction map without re-fetching.
+type ReactionMessage struct {
+	Type           string   `json:"type"`
+	MessageID      int64    `json:"message_id"`
+	ConversationID int64    `json:"conversation_id"`
+	User           UserInfo `json:"user"`
+	Emoji          string   `json:"emoji"`
+	Action         string   `json:"action"` // "add" | "remove"
 }

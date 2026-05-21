@@ -188,13 +188,67 @@ func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Batch-fetch reactions for the page.
+	var reactionsByMsg map[int64][]proto.ReactionGroup
+	if len(rows) > 0 {
+		ids := make([]int64, len(rows))
+		for i, m := range rows {
+			ids[i] = m.ID
+		}
+		rxs, rerr := h.messages.ListReactionsForMessages(r.Context(), ids)
+		if rerr != nil {
+			slog.Warn("reactions hydration failed", "error", rerr)
+		} else {
+			reactionsByMsg = groupReactions(rxs)
+		}
+	}
+
 	out := make([]proto.MessageView, len(rows))
 	for i, m := range rows {
 		view := messageToView(m, members)
 		view.Attachments = attachmentsToViews(attsByMsg[m.ID])
+		view.Reactions = reactionsByMsg[m.ID]
 		out[i] = view
 	}
 	writeJSON(w, http.StatusOK, proto.ListMessagesResponse{Messages: out})
+}
+
+// groupReactions folds a flat list of (message, user, emoji) rows
+// into per-message arrays of {emoji, user_ids[]} ordered by emoji.
+// Stable within an emoji by user_id ascending.
+func groupReactions(rxs []messages.Reaction) map[int64][]proto.ReactionGroup {
+	// message_id -> emoji -> []user_id
+	byMsg := map[int64]map[string][]int64{}
+	for _, r := range rxs {
+		inner, ok := byMsg[r.MessageID]
+		if !ok {
+			inner = map[string][]int64{}
+			byMsg[r.MessageID] = inner
+		}
+		inner[r.Emoji] = append(inner[r.Emoji], r.UserID)
+	}
+	out := make(map[int64][]proto.ReactionGroup, len(byMsg))
+	for msgID, inner := range byMsg {
+		groups := make([]proto.ReactionGroup, 0, len(inner))
+		for emoji, uids := range inner {
+			groups = append(groups, proto.ReactionGroup{
+				Emoji:   emoji,
+				UserIDs: uids,
+			})
+		}
+		// Stable order so identical messages produce identical bytes.
+		sortReactionGroups(groups)
+		out[msgID] = groups
+	}
+	return out
+}
+
+func sortReactionGroups(g []proto.ReactionGroup) {
+	for i := 1; i < len(g); i++ {
+		for j := i; j > 0 && g[j-1].Emoji > g[j].Emoji; j-- {
+			g[j-1], g[j] = g[j], g[j-1]
+		}
+	}
 }
 
 // attachmentsToViews maps attachments.Attachment to AttachmentView.

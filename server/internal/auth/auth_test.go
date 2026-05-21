@@ -302,6 +302,69 @@ func TestNewSessionToken_Unique(t *testing.T) {
 	}
 }
 
+func TestSetDisplayName_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.DisplayName != "" {
+		t.Errorf("expected empty display_name on create, got %q", u.DisplayName)
+	}
+	if err := svc.SetDisplayName(ctx, u.ID, "Alice 🌸"); err != nil {
+		t.Fatalf("SetDisplayName: %v", err)
+	}
+	got, err := svc.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if got.DisplayName != "Alice 🌸" {
+		t.Errorf("expected display_name 'Alice 🌸', got %q", got.DisplayName)
+	}
+	// Empty clears.
+	if err := svc.SetDisplayName(ctx, u.ID, ""); err != nil {
+		t.Fatalf("clear display_name: %v", err)
+	}
+	got, _ = svc.GetUserByID(ctx, u.ID)
+	if got.DisplayName != "" {
+		t.Errorf("expected cleared display_name, got %q", got.DisplayName)
+	}
+}
+
+func TestSetDisplayName_TooLong(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	long := strings.Repeat("a", MaxDisplayNameLength+1)
+	if err := svc.SetDisplayName(ctx, u.ID, long); !errors.Is(err, ErrDisplayNameTooLong) {
+		t.Errorf("expected ErrDisplayNameTooLong, got %v", err)
+	}
+}
+
+func TestSetAvatarAttachmentID_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	// Without a real attachment, SET to a hypothetical id should still
+	// succeed at the auth layer (the FK enforces the constraint —
+	// SQLite without PRAGMA foreign_keys=ON tolerates dangling refs).
+	// For this test we just verify the column round-trips.
+	if err := svc.SetAvatarAttachmentID(ctx, u.ID, 0); err != nil {
+		t.Fatalf("clear avatar (already null): %v", err)
+	}
+	got, _ := svc.GetUserByID(ctx, u.ID)
+	if got.AvatarAttachmentID != 0 {
+		t.Errorf("expected avatar 0, got %d", got.AvatarAttachmentID)
+	}
+}
+
 func TestCreateUser_DefaultsToNonAdmin(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t, 0)

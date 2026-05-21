@@ -38,10 +38,13 @@ import {
   type MembersChangedPayload,
   type MessagePayload,
   type NudgePayload,
+  type OutgoingReactPayload,
+  type ReactionPayload,
   type ReadReceiptPayload,
   type SendPayload,
   type SessionSnapshot,
   type TypingPayload,
+  type UserUpdatedPayload,
 } from "./lib/chatBridge";
 import {
   clearSession as clearStoredSession,
@@ -61,12 +64,16 @@ import {
   setWindowTitle,
 } from "./lib/tauri";
 import { checkForUpdate, type AvailableUpdate } from "./lib/updater";
+import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
+import { Avatar } from "./components/Avatar";
+import { ProfileModal } from "./components/ProfileModal";
 import type {
   ConversationView,
   MessageView,
   OutgoingMessage,
   PresenceInfo,
+  ReactionGroup,
   RoomView,
   ServerMessage,
   UserInfo,
@@ -312,6 +319,22 @@ function ChatScreen({
   const [reads, setReads] = useState<Map<number, Map<number, number>>>(
     new Map(),
   );
+  // user_id → UserInfo. Authoritative source for rendering anywhere a
+  // user appears (contact rows, message bubbles, etc). Updated from
+  // welcome.online, presence deltas, user_profile_changed broadcasts,
+  // and the membership lists embedded in ConversationView.
+  const [userCache, setUserCache] = useState<Map<number, UserInfo>>(() => {
+    const m = new Map<number, UserInfo>();
+    m.set(session.user.id, session.user);
+    return m;
+  });
+  // Per-message reactions, populated by message history loads + live
+  // reaction events. Chat windows keep their own copy too — this one
+  // is the parent cache used for hydrate.
+  const [reactions, setReactions] = useState<Map<number, ReactionGroup[]>>(
+    new Map(),
+  );
+  const [profileOpen, setProfileOpen] = useState(false);
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -337,6 +360,10 @@ function ChatScreen({
   mutedRef.current = muted;
   const readsRef = useRef(reads);
   readsRef.current = reads;
+  const userCacheRef = useRef(userCache);
+  userCacheRef.current = userCache;
+  const reactionsRef = useRef(reactions);
+  reactionsRef.current = reactions;
 
   function toggleMuted() {
     setMutedState((prev) => {
@@ -348,6 +375,47 @@ function ChatScreen({
         void emitTo(`chat-${id}`, EVT.MutedChanged, { muted: next });
       }
       return next;
+    });
+  }
+
+  // upsertUser merges an incoming UserInfo into the cache. If the
+  // user_id matches the current session, we ALSO update session.user
+  // (and persist) so the topbar reflects display-name/avatar changes
+  // the user makes themselves.
+  const upsertUser = useCallback(
+    (u: UserInfo) => {
+      setUserCache((prev) => {
+        const next = new Map(prev);
+        next.set(u.id, u);
+        return next;
+      });
+      if (u.id === session.user.id) {
+        const updated: Session = { ...session, user: u };
+        saveSession(updated);
+        // We can't call setSession (it's in App) from here without
+        // prop-drilling; the cache is enough for visual updates.
+        // Topbar reads from userCache for its own avatar.
+      }
+    },
+    [session],
+  );
+
+  function applyReaction(
+    messageID: number,
+    userID: number,
+    emoji: string,
+    action: "add" | "remove",
+  ) {
+    setReactions((prev) => {
+      const cur = prev.get(messageID) ?? [];
+      const next = mergeReaction(cur, userID, emoji, action);
+      const out = new Map(prev);
+      if (next.length === 0) {
+        out.delete(messageID);
+      } else {
+        out.set(messageID, next);
+      }
+      return out;
     });
   }
 
@@ -417,15 +485,22 @@ function ChatScreen({
               readsObj[uid] = lr;
             }
           }
+          const reactionsObj: Record<number, ReactionGroup[]> = {};
+          const msgsForConv = messagesRef.current.get(cid) ?? [];
+          for (const m of msgsForConv) {
+            const r = reactionsRef.current.get(m.id);
+            if (r && r.length > 0) reactionsObj[m.id] = r;
+          }
           const hydrate: HydratePayload = {
             session: sessionRef.current,
             conv,
-            messages: messagesRef.current.get(cid) ?? [],
+            messages: msgsForConv,
             typers: Array.from(
               (typingRef.current.get(cid) ?? new Map()).values(),
             ),
             muted: mutedRef.current,
             reads: readsObj,
+            reactions: reactionsObj,
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -452,6 +527,17 @@ function ChatScreen({
             conversation_id: e.payload.conversation_id,
           });
         }),
+        await listen<ChatToMainEnvelope<OutgoingReactPayload>>(
+          EVT.OutgoingReact,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "react",
+              message_id: e.payload.message_id,
+              emoji: e.payload.emoji,
+            });
+          },
+        ),
         await listen<ChatToMainEnvelope<{ focused: boolean }>>(
           EVT.Focused,
           (e) => {
@@ -497,6 +583,8 @@ function ChatScreen({
     switch (msg.type) {
       case "welcome":
         setOnline(sortPresence(msg.online));
+        // Seed the user cache with everyone in the snapshot.
+        for (const p of msg.online) upsertUser(p.user);
         {
           const me = msg.online.find((p) => p.user.id === session.user.id);
           if (me) {
@@ -519,6 +607,7 @@ function ChatScreen({
         }
         return;
       case "presence":
+        upsertUser(msg.user);
         setOnline((prev) => {
           if (msg.state === "offline") {
             return prev.filter((p) => p.user.id !== msg.user.id);
@@ -578,6 +667,38 @@ function ChatScreen({
         return;
       case "nudge":
         triggerNudgeReceived(msg.conversation_id, msg.sender);
+        return;
+      case "user_profile_changed":
+        upsertUser(msg.user);
+        // Fan out to every open chat window so member lists +
+        // message-sender info refresh live.
+        {
+          const payload: UserUpdatedPayload = { user: msg.user };
+          for (const cid of openChatsRef.current) {
+            void emitTo(`chat-${cid}`, EVT.UserUpdated, payload);
+          }
+        }
+        return;
+      case "reaction":
+        applyReaction(
+          msg.message_id,
+          msg.user.id,
+          msg.emoji,
+          msg.action,
+        );
+        if (openChatsRef.current.has(msg.conversation_id)) {
+          const payload: ReactionPayload = {
+            message_id: msg.message_id,
+            user_id: msg.user.id,
+            emoji: msg.emoji,
+            action: msg.action,
+          };
+          void emitTo(
+            `chat-${msg.conversation_id}`,
+            EVT.IncomingReaction,
+            payload,
+          );
+        }
         return;
       case "read_receipt":
         setReads((prev) => {
@@ -657,6 +778,14 @@ function ChatScreen({
   }
 
   function appendMessage(m: OutgoingMessage) {
+    upsertUser(m.sender);
+    if (m.reactions && m.reactions.length > 0) {
+      setReactions((prev) => {
+        const out = new Map(prev);
+        out.set(m.id, m.reactions!);
+        return out;
+      });
+    }
     const view: MessageView = {
       id: m.id,
       conversation_id: m.conversation_id,
@@ -664,6 +793,7 @@ function ChatScreen({
       body: m.body,
       created_at: m.created_at,
       attachments: m.attachments,
+      reactions: m.reactions,
     };
     setMessages((prev) => {
       const existing = prev.get(m.conversation_id) ?? [];
@@ -723,6 +853,19 @@ function ChatScreen({
         out.set(convID, mergeByID(asc, incoming));
         return out;
       });
+      // Hydrate the per-message reactions cache from the page.
+      // Also stuff each message's sender into the user cache (the
+      // server populates display_name + has_avatar on these views).
+      setReactions((prev) => {
+        const out = new Map(prev);
+        for (const m of asc) {
+          if (m.reactions && m.reactions.length > 0) {
+            out.set(m.id, m.reactions);
+          }
+        }
+        return out;
+      });
+      for (const m of asc) upsertUser(m.sender);
     } catch (err) {
       console.error("listMessages failed:", err);
     } finally {
@@ -985,7 +1128,20 @@ function ChatScreen({
     <main className="phase6 chat-screen">
       <header className="topbar">
         <div className="me">
-          <strong>{session.user.username}</strong>
+          <button
+            type="button"
+            className="me-avatar"
+            onClick={() => setProfileOpen(true)}
+            title="Edit profile"
+          >
+            <Avatar
+              user={userCache.get(session.user.id) ?? session.user}
+              serverUrl={session.serverUrl}
+              token={session.token}
+              size={32}
+            />
+          </button>
+          <strong>{displayNameOf(userCache.get(session.user.id) ?? session.user)}</strong>
           <StatusMenu
             state={myState}
             customText={myCustomText}
@@ -1008,11 +1164,23 @@ function ChatScreen({
         </div>
       </header>
 
+      {profileOpen && (
+        <ProfileModal
+          me={userCache.get(session.user.id) ?? session.user}
+          serverUrl={session.serverUrl}
+          token={session.token}
+          onClose={() => setProfileOpen(false)}
+        />
+      )}
+
       <ContactList
         self={session.user}
         online={online}
         conversations={conversations}
         unreadByConv={unreadByConv}
+        userCache={userCache}
+        serverUrl={session.serverUrl}
+        token={session.token}
         onPickUser={openChatWithUser}
         onPickConv={(id) => void openChatWindow(id)}
         onNewGroup={() => setModal("newGroup")}
@@ -1074,6 +1242,9 @@ function ContactList({
   online,
   conversations,
   unreadByConv,
+  userCache,
+  serverUrl,
+  token,
   onPickUser,
   onPickConv,
   onNewGroup,
@@ -1084,12 +1255,21 @@ function ContactList({
   online: PresenceInfo[];
   conversations: Map<number, ConversationView>;
   unreadByConv: Map<number, number>;
+  userCache: Map<number, UserInfo>;
+  serverUrl: string;
+  token: string;
   onPickUser: (u: UserInfo) => void;
   onPickConv: (convID: number) => void;
   onNewGroup: () => void;
   onNewRoom: () => void;
   onBrowseRooms: () => void;
 }) {
+  // Resolve a user against the cache so newly-uploaded avatars and
+  // display-name edits show without waiting for the next presence
+  // tick.
+  function enrich(u: UserInfo): UserInfo {
+    return userCache.get(u.id) ?? u;
+  }
   const onlineIDs = new Set(online.map((p) => p.user.id));
 
   const dmContactMap = new Map<number, UserInfo>();
@@ -1131,10 +1311,12 @@ function ContactList({
             {onlineOthers.map((p) => (
               <ContactRow
                 key={p.user.id}
-                user={p.user}
+                user={enrich(p.user)}
                 state={p.state}
                 customText={p.custom_text}
                 unread={unreadForUser(p.user)}
+                serverUrl={serverUrl}
+                token={token}
                 onClick={() => onPickUser(p.user)}
               />
             ))}
@@ -1151,9 +1333,11 @@ function ContactList({
             {offlineContacts.map((u) => (
               <ContactRow
                 key={u.id}
-                user={u}
+                user={enrich(u)}
                 state="offline"
                 unread={unreadForUser(u)}
+                serverUrl={serverUrl}
+                token={token}
                 onClick={() => onPickUser(u)}
               />
             ))}
@@ -1201,19 +1385,26 @@ function ContactRow({
   state,
   customText,
   unread,
+  serverUrl,
+  token,
   onClick,
 }: {
   user: UserInfo;
   state: UserState;
   customText?: string;
   unread: number;
+  serverUrl: string;
+  token: string;
   onClick: () => void;
 }) {
   return (
     <li>
       <button type="button" className="contact-row" onClick={onClick}>
-        <span className={`dot dot-${state}`} title={state} />
-        <span className="contact-name">{user.username}</span>
+        <span className="contact-avatar-wrap">
+          <Avatar user={user} serverUrl={serverUrl} token={token} size={28} />
+          <span className={`dot dot-${state} dot-overlay`} title={state} />
+        </span>
+        <span className="contact-name">{displayNameOf(user)}</span>
         {customText && (
           <span className="contact-status-text" title={customText}>
             {customText}
@@ -1654,6 +1845,32 @@ function conversationIcon(conv: ConversationView): string {
   if (conv.type === "room") return "#";
   if (conv.type === "group") return "⊙";
   return "•";
+}
+
+// mergeReaction applies a single (user_id, emoji, add/remove) delta to
+// a message's reaction groups. Returns a NEW array (or [] when the
+// last reaction is removed) — callers swap it into their map.
+function mergeReaction(
+  current: ReactionGroup[],
+  userID: number,
+  emoji: string,
+  action: "add" | "remove",
+): ReactionGroup[] {
+  const out = current.map((g) => ({ emoji: g.emoji, user_ids: [...g.user_ids] }));
+  const idx = out.findIndex((g) => g.emoji === emoji);
+  if (action === "add") {
+    if (idx === -1) {
+      out.push({ emoji, user_ids: [userID] });
+    } else if (!out[idx].user_ids.includes(userID)) {
+      out[idx].user_ids.push(userID);
+    }
+  } else {
+    if (idx === -1) return out;
+    out[idx].user_ids = out[idx].user_ids.filter((id) => id !== userID);
+    if (out[idx].user_ids.length === 0) out.splice(idx, 1);
+  }
+  out.sort((a, b) => (a.emoji < b.emoji ? -1 : a.emoji > b.emoji ? 1 : 0));
+  return out;
 }
 
 function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {

@@ -101,10 +101,10 @@ func runServe(args []string) error {
 		return fmt.Errorf("creating attachments service: %w", err)
 	}
 
+	hub := ws.NewHub()
 	authHandler := api.NewAuthHandler(authSvc)
 	adminHandler := api.NewAdminHandler(authSvc)
-
-	hub := ws.NewHub()
+	profileHandler := api.NewProfileHandler(authSvc, attachmentsSvc, hub)
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
 	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -133,6 +133,7 @@ func runServe(args []string) error {
 	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
 	adminHandler.Mount(r)
+	profileHandler.Mount(r)
 	convsHandler.Mount(r)
 	filesHandler.Mount(r)
 	// Embedded admin web UI. Redirect the bare /admin to /admin/ so the

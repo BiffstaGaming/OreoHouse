@@ -18,6 +18,11 @@ export interface UserInfo {
   id: number;
   username: string;
   created_at: string;
+  // Optional display name; clients fall back to `username` when empty.
+  display_name?: string;
+  // True when the user has an avatar uploaded. Fetch via
+  // `${serverUrl}/api/users/${id}/avatar?token=...`.
+  has_avatar?: boolean;
 }
 
 export interface ErrorResponse {
@@ -41,6 +46,9 @@ export const MessageType = {
   Status: "status",
   Read: "read",
   ReadReceipt: "read_receipt",
+  UserProfileChanged: "user_profile_changed",
+  React: "react",
+  Reaction: "reaction",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -154,6 +162,7 @@ export interface OutgoingMessage {
   body: string;
   created_at: string;
   attachments?: AttachmentView[];
+  reactions?: ReactionGroup[];
 }
 
 // Client→server: post a message to a conversation. Body is 0..4096
@@ -201,6 +210,40 @@ export interface ReadReceiptMessage {
   at: string;
 }
 
+// Server→all clients: a user updated their display_name or avatar.
+// Clients should swap their cached UserInfo for this user in one
+// operation (contact list rows, open chat windows).
+export interface UserProfileChangedMessage {
+  type: "user_profile_changed";
+  user: UserInfo;
+}
+
+// Client→server: toggle a reaction on a message. The server adds the
+// reaction if absent, removes it if present, and broadcasts a
+// ReactionMessage to every conversation member.
+export interface IncomingReactMessage {
+  type: "react";
+  message_id: number;
+  emoji: string;
+}
+
+// Server→all-members of the message's conversation: a reaction was
+// toggled. `action` is "add" or "remove".
+export interface ReactionMessage {
+  type: "reaction";
+  message_id: number;
+  conversation_id: number;
+  user: UserInfo;
+  emoji: string;
+  action: "add" | "remove";
+}
+
+// Per-message reaction summary surfaced in MessageView.reactions.
+export interface ReactionGroup {
+  emoji: string;
+  user_ids: number[];
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | PresenceMessage
@@ -211,7 +254,9 @@ export type ServerMessage =
   | ConversationMembersChangedMessage
   | TypingMessage
   | NudgeMessage
-  | ReadReceiptMessage;
+  | ReadReceiptMessage
+  | UserProfileChangedMessage
+  | ReactionMessage;
 
 export type ClientMessage =
   | PingMessage
@@ -219,7 +264,8 @@ export type ClientMessage =
   | StatusMessage
   | IncomingTypingMessage
   | IncomingNudgeMessage
-  | IncomingReadMessage;
+  | IncomingReadMessage
+  | IncomingReactMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 
@@ -273,6 +319,7 @@ export interface MessageView {
   body: string;
   created_at: string;
   attachments?: AttachmentView[];
+  reactions?: ReactionGroup[];
 }
 
 export interface ListMessagesResponse {

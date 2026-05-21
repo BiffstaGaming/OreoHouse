@@ -69,6 +69,15 @@ type CreateDMRequest struct {
 	UserID int64 `json:"user_id"`
 }
 
+// ReactionGroup folds every (user, emoji) pair on a single message
+// into one entry per emoji, with the list of user_ids who reacted.
+// Used by MessageView + OutgoingMessage so the client can render
+// pills without re-grouping.
+type ReactionGroup struct {
+	Emoji   string  `json:"emoji"`
+	UserIDs []int64 `json:"user_ids"`
+}
+
 // MessageView is the JSON projection of a message.
 type MessageView struct {
 	ID             int64            `json:"id"`
@@ -77,6 +86,7 @@ type MessageView struct {
 	Body           string           `json:"body"`
 	CreatedAt      string           `json:"created_at"`
 	Attachments    []AttachmentView `json:"attachments,omitempty"`
+	Reactions      []ReactionGroup  `json:"reactions,omitempty"`
 }
 
 // ListMessagesResponse is the body of GET /api/conversations/{id}/messages.

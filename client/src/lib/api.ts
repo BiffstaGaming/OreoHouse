@@ -12,6 +12,7 @@ import type {
   LoginResponse,
   MessageView,
   RoomView,
+  UserInfo,
 } from "../types/proto";
 
 // login POSTs /api/auth/login and returns the parsed body on 200. On
@@ -245,6 +246,82 @@ export async function listMessages(
     path.pathname + path.search,
   );
   return body.messages;
+}
+
+// setMyDisplayName PUTs /api/me/profile and returns the updated
+// UserInfo. Empty string clears the stored display name.
+export async function setMyDisplayName(
+  serverUrl: string,
+  token: string,
+  displayName: string,
+): Promise<UserInfo> {
+  return postJSONMethod<UserInfo>(serverUrl, token, "PUT", "/api/me/profile", {
+    display_name: displayName,
+  });
+}
+
+// uploadMyAvatar POSTs the file as multipart/form-data to
+// /api/me/avatar. The server links it to the user and broadcasts a
+// user_profile_changed event to every client.
+export async function uploadMyAvatar(
+  serverUrl: string,
+  token: string,
+  file: File,
+): Promise<UserInfo> {
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch(new URL("/api/me/avatar", serverUrl).toString(), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  return parseResponse<UserInfo>(resp);
+}
+
+// deleteMyAvatar DELETEs /api/me/avatar.
+export async function deleteMyAvatar(
+  serverUrl: string,
+  token: string,
+): Promise<UserInfo> {
+  const resp = await fetch(new URL("/api/me/avatar", serverUrl).toString(), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return parseResponse<UserInfo>(resp);
+}
+
+// avatarURL builds the cache-busted URL for a user's avatar. Includes
+// the session token because <img src> can't set an Authorization
+// header. Returns null when the user doesn't have an avatar.
+export function avatarURL(
+  serverUrl: string,
+  token: string,
+  user: { id: number; has_avatar?: boolean },
+): string | null {
+  if (!user.has_avatar) return null;
+  const url = new URL(`/api/users/${user.id}/avatar`, serverUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+// postJSONMethod is postJSON with an arbitrary verb (PUT, DELETE, …).
+async function postJSONMethod<T>(
+  serverUrl: string,
+  token: string,
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<T> {
+  const url = new URL(path, serverUrl);
+  const resp = await fetch(url.toString(), {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return parseResponse<T>(resp);
 }
 
 async function getJSON<T>(

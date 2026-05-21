@@ -74,9 +74,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	resp := proto.LoginResponse{
 		Token: sess.Token,
 		User: proto.UserInfo{
-			ID:        user.ID,
-			Username:  user.Username,
-			CreatedAt: user.CreatedAt.UTC().Format(time.RFC3339Nano),
+			ID:          user.ID,
+			Username:    user.Username,
+			CreatedAt:   user.CreatedAt.UTC().Format(time.RFC3339Nano),
+			DisplayName: user.DisplayName,
+			HasAvatar:   user.AvatarAttachmentID > 0,
 		},
 	}
 	if !sess.ExpiresAt.IsZero() {
