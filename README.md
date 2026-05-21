@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 7 — old-school feel landed. On top of Phase 6's contact-list-and-floating-windows UI, every Messenger ritual is now wired up: custom status (`online` / `away` / `busy` + a free-text line, persisted across sessions), typing indicators in the open chat, nudges that shake the recipient's window and rumble through the speakers, a short blip on incoming messages, and a per-machine mute toggle. The CSS got an MSN palette pass too — blue gradient title bars, beveled buttons, radial-gradient status dots — so the app finally *looks* the part. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 8 — admin panel landed. The server now ships a tiny embedded web UI at `http://server:8080/admin/` for user management: log in as an admin, see the user list with last-seen timestamps, add new users, and reset any user's password. The first user added via `oreohouse user add` on a fresh install is auto-promoted to admin; further promotions / demotions happen via the new `oreohouse user promote` / `user demote` CLI commands. The page is plain HTML + ES module JS + CSS, no build step (see [ADR 0002](docs/decisions/0002-admin-ui-vanilla-html.md)). See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -67,6 +67,8 @@ Endpoints:
 - `POST /api/rooms/{id}/join` → self-join a room. Idempotent.
 - `POST /api/uploads` → multipart/form-data with a single `file` part. Returns the new `AttachmentView`. Capped at `OREOHOUSE_MAX_UPLOAD_MB`. Bearer auth required.
 - `GET /api/files/{id}` → stream the bytes. Accepts either `Authorization: Bearer ...` or `?token=...` query (so `<img src>` works). Caller must be the uploader (covers orphan uploads) or a member of the conversation the attachment is linked to; otherwise 404.
+- `GET /api/admin/users` / `POST /api/admin/users` / `PUT /api/admin/users/{id}/password` → admin-only user management. Behind a Bearer-token check **plus** an `is_admin` gate (non-admin callers get 403 `"admin required"`). Powers the embedded panel at `/admin/`; see [Admin panel](#admin-panel) below.
+- `GET /admin/` → embedded HTML + JS web UI for the admin endpoints above. Login uses the same `/api/auth/login` flow as the desktop client; the page hides itself from non-admins.
 
 ## Authentication
 
@@ -142,9 +144,15 @@ oreohouse user add --username alice
 # Scriptable: read password from stdin.
 echo 'hunter2hunter' | oreohouse user add --username alice --password-stdin
 
-# List all users.
+# List all users (shows an ADMIN column).
 oreohouse user list
+
+# Mark a user as admin (idempotent; refuses to demote the last admin).
+oreohouse user promote --username alice
+oreohouse user demote  --username alice
 ```
+
+The **first** user added to a fresh database is auto-promoted to admin so there's always one bootstrap account. Subsequent users default to non-admin; promote them with the panel or the CLI.
 
 Constraints enforced by the CLI and server:
 
@@ -158,6 +166,18 @@ Running these inside the running Docker container:
 ```bash
 docker exec -it oreohouse /app/oreohouse user list
 ```
+
+## Admin panel
+
+The server hosts a tiny web UI at `http://<server>:8080/admin/` for user management. Open it from any browser on the LAN — no Tauri install needed.
+
+- **Sign in** with any user account; only `is_admin` users get past the dashboard probe (non-admins see "That account isn't an admin." and bounce back to the login form).
+- **Users table** lists every account with `id`, `username`, admin badge, `created_at`, and `last_seen_at` (blank for users who have never connected).
+- **Add user** form creates a new non-admin user. To promote them, run `oreohouse user promote --username X` from the CLI (the panel deliberately doesn't expose role toggles — see [ADR 0002](docs/decisions/0002-admin-ui-vanilla-html.md)).
+- **Reset password** opens a small modal that PUTs to `/api/admin/users/{id}/password`. Existing sessions for that user are NOT revoked; if you want them logged out, restart the server or wait for the session TTL (or delete the row from `sessions` manually — there's no panel control for this yet).
+- **Sign out** clears the token from `localStorage` and calls `/api/auth/logout`.
+
+The page itself is three files (`index.html`, `app.js`, `style.css`) baked into the Go binary via `embed.FS`; there is no separate build step or static-files volume to mount.
 
 ## Client (dev)
 
