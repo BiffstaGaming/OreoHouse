@@ -100,6 +100,25 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mute-toggle {
+  background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 1rem;
+  color: inherit;
+}
+
+.mute-toggle:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
 .ws-status {
   font-family: ui-monospace, monospace;
   font-size: 0.75rem;

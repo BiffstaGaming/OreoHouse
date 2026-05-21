@@ -25,6 +25,12 @@ import {
   uploadFile,
 } from "./lib/api";
 import {
+  isMuted as isMutedPersisted,
+  playMessageBlip,
+  playNudge,
+  setMuted as setMutedPersisted,
+} from "./lib/sounds";
+import {
   flashWindowIfUnfocused,
   setWindowTitle,
 } from "./lib/tauri";
@@ -186,6 +192,15 @@ function ChatScreen({
   // Set of conversation IDs whose chat window should be shaking right
   // now. Entries auto-clear after SHAKE_DURATION_MS.
   const [shaking, setShaking] = useState<Set<number>>(new Set());
+  const [muted, setMutedState] = useState<boolean>(() => isMutedPersisted());
+
+  function toggleMuted() {
+    setMutedState((prev) => {
+      const next = !prev;
+      setMutedPersisted(next);
+      return next;
+    });
+  }
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -345,6 +360,8 @@ function ChatScreen({
     // Flash the taskbar / dock when the main window is unfocused so
     // the user notices even with the app in the background.
     void flashWindowIfUnfocused();
+    // The blip itself short-circuits if muted; no need to gate here.
+    playMessageBlip();
   }
 
   async function ensureHistory(convID: number) {
@@ -501,7 +518,7 @@ function ChatScreen({
 
   // triggerNudgeReceived shakes the conversation's chat window for
   // SHAKE_DURATION_MS, opening or restoring the window first if it
-  // isn't already visible.
+  // isn't already visible. Also plays the nudge sound (mute-aware).
   function triggerNudgeReceived(convID: number) {
     // Open the window if it's closed or minimized so the user can
     // actually see the shake.
@@ -522,6 +539,8 @@ function ChatScreen({
         return out;
       });
     }, SHAKE_DURATION_MS);
+    playNudge();
+    void flashWindowIfUnfocused();
   }
 
   function updateStatus(state: UserState, customText: string) {
@@ -631,9 +650,19 @@ function ChatScreen({
           />
           <span className={`ws-status ws-status-${status}`}>{status}</span>
         </div>
-        <button type="button" onClick={handleSignOut}>
-          Sign out
-        </button>
+        <div className="topbar-right">
+          <button
+            type="button"
+            className="mute-toggle"
+            onClick={toggleMuted}
+            title={muted ? "Unmute sounds" : "Mute sounds"}
+          >
+            {muted ? "🔇" : "🔊"}
+          </button>
+          <button type="button" onClick={handleSignOut}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <ContactList
