@@ -37,6 +37,10 @@ export type HydratePayload = {
   // Initial muted-sound preference (so we don't have to share
   // localStorage races with the main window).
   muted: boolean;
+  // Initial read-state map for this conversation: user_id →
+  // last_read_message_id. Hydrated from welcome.reads + any live
+  // read_receipt events that arrived before the window opened.
+  reads: Record<number, number>;
 };
 
 export type MessagePayload = {
@@ -60,6 +64,14 @@ export type ConvUpdatedPayload = {
   conv: ConversationView;
 };
 
+// One incoming read_receipt update for the chat window. The chat
+// window stores its own per-conv reads map (keyed by user_id) so it
+// can render tick marks without going back to main.
+export type ReadReceiptPayload = {
+  user_id: number;
+  last_read_message_id: number;
+};
+
 export type SendPayload = {
   body: string;
   attachment_ids?: number[];
@@ -80,6 +92,7 @@ export const EVT = {
   IncomingMessage: "oreo:chat:message",
   IncomingTyping: "oreo:chat:typing",
   IncomingNudge: "oreo:chat:nudge",
+  IncomingReadReceipt: "oreo:chat:read_receipt",
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
   MutedChanged: "oreo:chat:muted_changed",

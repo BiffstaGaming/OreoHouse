@@ -36,11 +36,21 @@ Sent once immediately after a successful upgrade. Snapshots presence so the clie
       "state":       "away",
       "custom_text": "afk getting tea"
     }
+  ],
+  "reads": [
+    {
+      "conversation_id": 7,
+      "user_id": 2,
+      "last_read_message_id": 41,
+      "at": "..."
+    }
   ]
 }
 ```
 
 `online` includes the receiver, so the client never needs a special case for "is that me?". `state` is `"online" | "away" | "busy"` (`"offline"` never appears in the snapshot — offline users aren't in it). `custom_text` is omitted when the user hasn't set one.
+
+`reads` is the snapshot of every `(conversation_id, user_id, last_read_message_id)` row visible to the receiver — exactly the conversations they're a member of. Empty array on a brand-new install with no read activity yet.
 
 #### `presence`
 
@@ -144,6 +154,28 @@ Pushed to the *existing* members of a conversation whenever its membership chang
 
 A user who is themselves the change-target — the joiner / new invitee — gets `conversation_added` instead and does not receive a parallel `conversation_members_changed` for the same event.
 
+#### `read_receipt`
+
+Broadcast to the *other* members of a conversation when a user's read
+cursor advances. The recipient should update its per-`(conversation_id,
+user.id)` read map and re-render tick marks on the sender's own
+messages.
+
+```json
+{
+  "type": "read_receipt",
+  "conversation_id": 7,
+  "user": { "id": 2, "username": "bob", "created_at": "..." },
+  "last_read_message_id": 42,
+  "at": "..."
+}
+```
+
+The cursor is monotonic — clients ignore receipts whose
+`last_read_message_id` is less than the stored value for that user.
+The user's *own* read cursor moves are not echoed back to them (they
+emitted the client→server `read` to begin with).
+
 #### `typing`
 
 Fanned out to the *other* members of a conversation when one of them sends a client→server `typing`. There is no acknowledgement to the sender, and no event is emitted to the typist themselves.
@@ -244,6 +276,23 @@ Send a window-shake nudge to the other members of a conversation. The server fan
 ```json
 { "type": "nudge", "conversation_id": 7 }
 ```
+
+#### `read`
+
+Tell the server "I've read messages up to `last_read_message_id` in
+this conversation". The server validates membership, persists
+monotonically (no-op if the new id is ≤ the stored value), and fans
+out a server→client `read_receipt` (above) to the *other* members
+when the cursor actually advances.
+
+```json
+{ "type": "read", "conversation_id": 7, "last_read_message_id": 42 }
+```
+
+Clients should emit this when their chat window for the conversation
+gains OS focus, using the highest message id they currently have
+loaded for that conv. There is no server-side rate limit; the chat
+UI's natural focus debouncing is sufficient.
 
 ## Connection lifecycle
 

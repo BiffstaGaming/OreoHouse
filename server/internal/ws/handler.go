@@ -162,10 +162,28 @@ func (h *Handler) serve(parentCtx context.Context, conn *websocket.Conn, user au
 }
 
 func (h *Handler) sendWelcome(ctx context.Context, conn *websocket.Conn, user auth.User) error {
+	reads, err := h.messages.ListReadsForUser(ctx, user.ID)
+	if err != nil {
+		// Non-fatal — clients can still render the chat without an
+		// initial read-state snapshot; live read_receipt events will
+		// fill it in. Log but continue.
+		slog.Error("ws: hydrate reads failed", "error", err, "user_id", user.ID)
+		reads = nil
+	}
+	views := make([]proto.ReadStateView, 0, len(reads))
+	for _, r := range reads {
+		views = append(views, proto.ReadStateView{
+			ConversationID:    r.ConversationID,
+			UserID:            r.UserID,
+			LastReadMessageID: r.LastReadMessageID,
+			At:                r.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
 	msg := proto.WelcomeMessage{
 		Type:   proto.TypeWelcome,
 		You:    userToInfo(user),
 		Online: presenceToInfos(h.hub.OnlineUsers()),
+		Reads:  views,
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -229,6 +247,8 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleTyping(ctx, c, data)
 		case proto.TypeNudge:
 			h.handleNudge(ctx, c, data)
+		case proto.TypeRead:
+			h.handleRead(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
@@ -312,6 +332,57 @@ func (h *Handler) handleNudge(ctx context.Context, c *Client, raw []byte) {
 			ID:       c.user.ID,
 			Username: c.user.Username,
 		},
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	otherIDs := make([]int64, 0, len(members)-1)
+	for _, m := range members {
+		if m.UserID == c.user.ID {
+			continue
+		}
+		otherIDs = append(otherIDs, m.UserID)
+	}
+	h.hub.SendToUsers(b, otherIDs)
+}
+
+// handleRead persists the sender's read cursor for a conversation and,
+// if the cursor advanced, broadcasts a read_receipt to the OTHER
+// members so their UIs can render tick marks.
+func (h *Handler) handleRead(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingReadMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		// Read receipts are advisory — don't surface protocol errors.
+		return
+	}
+	if in.ConversationID <= 0 || in.LastReadMessageID <= 0 {
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, in.ConversationID, c.user.ID)
+	if err != nil || !ok {
+		return
+	}
+	changed, err := h.messages.MarkConversationRead(
+		ctx, in.ConversationID, c.user.ID, in.LastReadMessageID,
+	)
+	if err != nil {
+		slog.Error("ws: mark read failed", "error", err, "user_id", c.user.ID)
+		return
+	}
+	if !changed {
+		return
+	}
+	members, err := h.convs.Members(ctx, in.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.ReadReceiptMessage{
+		Type:              proto.TypeReadReceipt,
+		ConversationID:    in.ConversationID,
+		User:              userToInfo(c.user),
+		LastReadMessageID: in.LastReadMessageID,
+		At:                time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {

@@ -30,8 +30,10 @@ import {
   type ConvUpdatedPayload,
   type MessageView,
   type NudgePayload,
+  type ReadReceiptPayload,
   type SessionSnapshot,
   type TypingPayload,
+  type UserInfo,
 } from "./lib/chatBridge";
 
 import "./App.css";
@@ -54,6 +56,8 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   >(new Map());
   const [shaking, setShaking] = useState(false);
   const [muted, setMuted] = useState(false);
+  // user_id → highest message_id they've read in this conversation.
+  const [reads, setReads] = useState<Map<number, number>>(new Map());
 
   // Use refs so the listen()-callbacks (set up once) can see the latest
   // session/muted without re-subscribing.
@@ -91,6 +95,11 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
             );
             setMuted(e.payload.muted);
+            const next = new Map<number, number>();
+            for (const [uid, lr] of Object.entries(e.payload.reads ?? {})) {
+              next.set(Number(uid), lr);
+            }
+            setReads(next);
           },
           opts,
         ),
@@ -155,6 +164,19 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           EVT.MutedChanged,
           (e) => {
             setMuted(e.payload.muted);
+          },
+          opts,
+        ),
+        await listen<ReadReceiptPayload>(
+          EVT.IncomingReadReceipt,
+          (e) => {
+            setReads((prev) => {
+              const current = prev.get(e.payload.user_id) ?? 0;
+              if (e.payload.last_read_message_id <= current) return prev;
+              const next = new Map(prev);
+              next.set(e.payload.user_id, e.payload.last_read_message_id);
+              return next;
+            });
           },
           opts,
         ),
@@ -238,6 +260,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
       messages={messages}
       typers={Array.from(typers.values())}
       shaking={shaking}
+      reads={reads}
     />
   );
 }
@@ -252,6 +275,7 @@ function ChatBody({
   messages,
   typers,
   shaking,
+  reads,
 }: {
   session: SessionSnapshot;
   conv: ConversationView;
@@ -259,6 +283,7 @@ function ChatBody({
   messages: MessageView[];
   typers: { username: string; expiresAt: number }[];
   shaking: boolean;
+  reads: Map<number, number>;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
@@ -405,7 +430,13 @@ function ChatBody({
           <p className="empty">No messages yet — say hi.</p>
         ) : (
           messages.map((m) => (
-            <MessageRow key={m.id} m={m} session={session} />
+            <MessageRow
+              key={m.id}
+              m={m}
+              session={session}
+              conv={conv}
+              reads={reads}
+            />
           ))
         )}
       </div>
@@ -489,9 +520,13 @@ function ChatBody({
 function MessageRow({
   m,
   session,
+  conv,
+  reads,
 }: {
   m: MessageView;
   session: SessionSnapshot;
+  conv: ConversationView;
+  reads: Map<number, number>;
 }) {
   const mine = m.sender.id === session.user.id;
   return (
@@ -508,7 +543,54 @@ function MessageRow({
           ))}
         </div>
       )}
+      {mine && <ReadTicks m={m} conv={conv} reads={reads} self={session.user} />}
     </div>
+  );
+}
+
+// ReadTicks renders the single ✓ (delivered) or double ✓✓ (read) under
+// own messages. For groups, hovering shows "Read by Alice, Bob (2/3)".
+function ReadTicks({
+  m,
+  conv,
+  reads,
+  self,
+}: {
+  m: MessageView;
+  conv: ConversationView;
+  reads: Map<number, number>;
+  self: UserInfo;
+}) {
+  const others = conv.members.filter((u) => u.id !== self.id);
+  if (others.length === 0) return null;
+  const readers = others.filter((u) => (reads.get(u.id) ?? 0) >= m.id);
+  const isDM = conv.type === "dm";
+
+  if (readers.length === 0) {
+    return (
+      <span className="msg-ticks msg-ticks-sent" title="Sent">
+        ✓
+      </span>
+    );
+  }
+  const all = readers.length === others.length;
+  const tooltip = isDM
+    ? "Read"
+    : all
+      ? `Read by all (${readers.length}/${others.length})`
+      : `Read by ${readers.map((r) => r.username).join(", ")} (${readers.length}/${others.length})`;
+  return (
+    <span
+      className={`msg-ticks ${all ? "msg-ticks-read" : "msg-ticks-partial"}`}
+      title={tooltip}
+    >
+      ✓✓
+      {!isDM && !all && (
+        <span className="msg-ticks-count">
+          {readers.length}/{others.length}
+        </span>
+      )}
+    </span>
   );
 }
 

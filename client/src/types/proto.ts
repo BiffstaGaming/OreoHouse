@@ -39,6 +39,8 @@ export const MessageType = {
   ConversationAdded: "conversation_added",
   ConversationMembersChanged: "conversation_members_changed",
   Status: "status",
+  Read: "read",
+  ReadReceipt: "read_receipt",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -61,10 +63,21 @@ export interface PresenceInfo {
   custom_text?: string;
 }
 
+// ReadStateView is a row of conversation_read_states surfaced over
+// the wire — in WelcomeMessage.reads (snapshot on connect) and
+// individually in ReadReceiptMessage as the cursor advances live.
+export interface ReadStateView {
+  conversation_id: number;
+  user_id: number;
+  last_read_message_id: number;
+  at: string;
+}
+
 export interface WelcomeMessage {
   type: "welcome";
   you: UserInfo;
   online: PresenceInfo[];
+  reads: ReadStateView[];
 }
 
 // Broadcast to every connected client whenever a user's presence
@@ -167,6 +180,27 @@ export interface ConversationMembersChangedMessage {
   members: UserInfo[];
 }
 
+// Client→server: I've read messages up to last_read_message_id in
+// this conversation. The server validates membership, persists
+// monotonically, and broadcasts a ReadReceiptMessage to other members
+// iff the cursor actually advances.
+export interface IncomingReadMessage {
+  type: "read";
+  conversation_id: number;
+  last_read_message_id: number;
+}
+
+// Server→other-members: a user's read cursor in a conversation has
+// advanced. Receivers should update their per-(conv, user) map and
+// re-render tick marks on the sender's own messages.
+export interface ReadReceiptMessage {
+  type: "read_receipt";
+  conversation_id: number;
+  user: UserInfo;
+  last_read_message_id: number;
+  at: string;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | PresenceMessage
@@ -176,14 +210,16 @@ export type ServerMessage =
   | ConversationAddedMessage
   | ConversationMembersChangedMessage
   | TypingMessage
-  | NudgeMessage;
+  | NudgeMessage
+  | ReadReceiptMessage;
 
 export type ClientMessage =
   | PingMessage
   | IncomingMessage
   | StatusMessage
   | IncomingTypingMessage
-  | IncomingNudgeMessage;
+  | IncomingNudgeMessage
+  | IncomingReadMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 

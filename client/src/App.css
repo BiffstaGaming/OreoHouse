@@ -650,6 +650,55 @@ button:disabled {
   word-break: break-word;
 }
 
+/* --- Read receipts (tick marks on own messages) --- */
+
+.msg-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+  font-family: ui-monospace, monospace;
+  user-select: none;
+  cursor: help;
+}
+
+/* Own messages are right-aligned via .msg-mine; the tick should sit
+   under the bubble on its right edge. */
+.msg-mine .msg-ticks {
+  align-self: flex-end;
+}
+
+.msg-ticks-sent {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.msg-ticks-partial {
+  color: rgba(170, 220, 255, 0.85);
+}
+
+.msg-ticks-read {
+  color: var(--msn-blue-light);
+}
+
+@media (prefers-color-scheme: light) {
+  .msg-ticks-sent {
+    color: rgba(0, 0, 0, 0.35);
+  }
+  .msg-ticks-partial {
+    color: var(--msn-blue);
+  }
+  .msg-ticks-read {
+    color: var(--msn-blue);
+  }
+}
+
+.msg-ticks-count {
+  font-size: 0.65rem;
+  opacity: 0.85;
+  margin-left: 0.15rem;
+}
+
 /* --- Composer (inside chat window) --- */
 
 .composer {

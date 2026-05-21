@@ -14,6 +14,8 @@ const (
 	TypeStatus                     = "status"
 	TypeTyping                     = "typing"
 	TypeNudge                      = "nudge"
+	TypeRead                       = "read"
+	TypeReadReceipt                = "read_receipt"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -60,13 +62,25 @@ type PresenceInfo struct {
 	CustomText string   `json:"custom_text,omitempty"`
 }
 
+// ReadStateView is one row of conversation_read_states, surfaced to
+// clients in welcome.reads and (live) via ReadReceiptMessage so the UI
+// can render tick marks.
+type ReadStateView struct {
+	ConversationID    int64  `json:"conversation_id"`
+	UserID            int64  `json:"user_id"`
+	LastReadMessageID int64  `json:"last_read_message_id"`
+	At                string `json:"at"`
+}
+
 // WelcomeMessage is sent server→client immediately after a successful
-// /ws upgrade. It snapshots current presence so the client can build
-// its initial UI without polling.
+// /ws upgrade. It snapshots current presence (and read-receipt state
+// for the user's convs) so the client can build its initial UI
+// without polling.
 type WelcomeMessage struct {
-	Type   string         `json:"type"`
-	You    UserInfo       `json:"you"`
-	Online []PresenceInfo `json:"online"`
+	Type   string          `json:"type"`
+	You    UserInfo        `json:"you"`
+	Online []PresenceInfo  `json:"online"`
+	Reads  []ReadStateView `json:"reads"`
 }
 
 // PresenceMessage is broadcast to every online client whenever a
@@ -188,4 +202,27 @@ type ConversationMembersChangedMessage struct {
 	Type           string     `json:"type"`
 	ConversationID int64      `json:"conversation_id"`
 	Members        []UserInfo `json:"members"`
+}
+
+// IncomingReadMessage is the client→server "read" envelope: the user
+// has seen messages up to LastReadMessageID in this conversation.
+// The server validates membership, persists monotonically, and (if
+// the cursor advanced) broadcasts a ReadReceiptMessage to other
+// members.
+type IncomingReadMessage struct {
+	Type              string `json:"type"`
+	ConversationID    int64  `json:"conversation_id"`
+	LastReadMessageID int64  `json:"last_read_message_id"`
+}
+
+// ReadReceiptMessage is server→other-members when a read cursor
+// advances. The recipient should update its per-(conv, user) read map
+// to reflect the new high-water mark and re-render tick indicators
+// on the sender's messages.
+type ReadReceiptMessage struct {
+	Type              string   `json:"type"`
+	ConversationID    int64    `json:"conversation_id"`
+	User              UserInfo `json:"user"`
+	LastReadMessageID int64    `json:"last_read_message_id"`
+	At                string   `json:"at"`
 }

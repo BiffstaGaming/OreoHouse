@@ -38,6 +38,7 @@ import {
   type MembersChangedPayload,
   type MessagePayload,
   type NudgePayload,
+  type ReadReceiptPayload,
   type SendPayload,
   type SessionSnapshot,
   type TypingPayload,
@@ -249,6 +250,12 @@ function ChatScreen({
     Map<number, Map<number, { username: string; expiresAt: number }>>
   >(new Map());
   const [muted, setMutedState] = useState<boolean>(() => isMutedPersisted());
+  // Per-conv per-user "highest message id this user has read", populated
+  // from welcome.reads and updated by live read_receipt events. The
+  // chat-window UI uses these to render ✓ / ✓✓ on own messages.
+  const [reads, setReads] = useState<Map<number, Map<number, number>>>(
+    new Map(),
+  );
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -272,6 +279,8 @@ function ChatScreen({
   typingRef.current = typing;
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const readsRef = useRef(reads);
+  readsRef.current = reads;
 
   function toggleMuted() {
     setMutedState((prev) => {
@@ -345,6 +354,13 @@ function ChatScreen({
           await ensureHistory(cid);
           const conv = conversationsRef.current.get(cid);
           if (!conv) return;
+          const readsForConv = readsRef.current.get(cid);
+          const readsObj: Record<number, number> = {};
+          if (readsForConv) {
+            for (const [uid, lr] of readsForConv.entries()) {
+              readsObj[uid] = lr;
+            }
+          }
           const hydrate: HydratePayload = {
             session: sessionRef.current,
             conv,
@@ -353,6 +369,7 @@ function ChatScreen({
               (typingRef.current.get(cid) ?? new Map()).values(),
             ),
             muted: mutedRef.current,
+            reads: readsObj,
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -392,6 +409,10 @@ function ChatScreen({
                 out.delete(cid);
                 return out;
               });
+              // Send a "read" cursor for the highest-known message
+              // in this conv so the other members' UIs flip from
+              // ✓ to ✓✓ on the sender's messages.
+              maybeSendRead(cid);
             } else if (focusedConvRef.current === cid) {
               focusedConvRef.current = null;
             }
@@ -426,6 +447,19 @@ function ChatScreen({
             setMyState(me.state);
             setMyCustomText(me.custom_text ?? "");
           }
+        }
+        // Hydrate read-state map. Defensive against an older server
+        // that doesn't ship the `reads` field.
+        {
+          const incoming = msg.reads ?? [];
+          const next = new Map<number, Map<number, number>>();
+          for (const r of incoming) {
+            const inner =
+              next.get(r.conversation_id) ?? new Map<number, number>();
+            inner.set(r.user_id, r.last_read_message_id);
+            next.set(r.conversation_id, inner);
+          }
+          setReads(next);
         }
         return;
       case "presence":
@@ -489,6 +523,30 @@ function ChatScreen({
       case "nudge":
         triggerNudgeReceived(msg.conversation_id, msg.sender);
         return;
+      case "read_receipt":
+        setReads((prev) => {
+          const inner = new Map(prev.get(msg.conversation_id) ?? new Map());
+          const current = inner.get(msg.user.id) ?? 0;
+          if (msg.last_read_message_id <= current) return prev;
+          inner.set(msg.user.id, msg.last_read_message_id);
+          const out = new Map(prev);
+          out.set(msg.conversation_id, inner);
+          return out;
+        });
+        // Forward to the open chat window so its tick marks update
+        // without waiting for the React re-render in main.
+        if (openChatsRef.current.has(msg.conversation_id)) {
+          const payload: ReadReceiptPayload = {
+            user_id: msg.user.id,
+            last_read_message_id: msg.last_read_message_id,
+          };
+          void emitTo(
+            `chat-${msg.conversation_id}`,
+            EVT.IncomingReadReceipt,
+            payload,
+          );
+        }
+        return;
       case "conversation_members_changed":
         setConversations((prev) => {
           const existing = prev.get(msg.conversation_id);
@@ -512,6 +570,34 @@ function ChatScreen({
       case "pong":
         return;
     }
+  }
+
+  // maybeSendRead computes the highest message id main has cached for
+  // this conv and emits a "read" cursor over the WS — but only if
+  // it's actually moved past our own previously-sent cursor (so we
+  // don't churn the server on every focus toggle).
+  function maybeSendRead(convID: number) {
+    if (!wsRef.current) return;
+    const msgs = messagesRef.current.get(convID);
+    if (!msgs || msgs.length === 0) return;
+    const top = msgs[msgs.length - 1].id;
+    const mine = readsRef.current.get(convID)?.get(session.user.id) ?? 0;
+    if (top <= mine) return;
+    wsRef.current.send({
+      type: "read",
+      conversation_id: convID,
+      last_read_message_id: top,
+    });
+    // Optimistically update local state so the same focus event
+    // doesn't keep re-sending while we wait for the echoed broadcast
+    // (which the server only fans out to OTHER members anyway).
+    setReads((prev) => {
+      const inner = new Map(prev.get(convID) ?? new Map());
+      inner.set(session.user.id, top);
+      const out = new Map(prev);
+      out.set(convID, inner);
+      return out;
+    });
   }
 
   function appendMessage(m: OutgoingMessage) {
