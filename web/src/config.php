@@ -7,6 +7,29 @@
 declare(strict_types=1);
 
 /**
+ * Append a content-based version query string to a static-asset path so
+ * browsers re-fetch it after a deploy. The .htaccess sets
+ * Cache-Control: max-age=3600 on CSS/JS — without versioning, every
+ * stylesheet change would be invisible until the cache expired or the
+ * user hard-refreshed. The version is the file's mtime, which changes
+ * on every build because Docker rewrites the layer.
+ *
+ * Path is the public-relative URL (e.g. "/assets/css/style.css"). The
+ * filesystem lookup happens once per page render; not worth memoising
+ * for a 5-user family deployment.
+ */
+function oreo_asset(string $path): string
+{
+    $abs = __DIR__ . '/../public' . $path;
+    $mtime = @filemtime($abs);
+    if ($mtime === false) {
+        return $path;
+    }
+    $sep = (strpos($path, '?') === false) ? '?' : '&';
+    return $path . $sep . 'v=' . $mtime;
+}
+
+/**
  * Resolve the Go server URL the PHP process itself uses for
  * server-to-server REST calls (login, logout). Inside Docker this is
  * typically the service-name URL (e.g. http://oreohouse:8080). On bare
