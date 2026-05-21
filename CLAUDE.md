@@ -176,7 +176,7 @@ Server container exposes `:8080`. Volume `./data` mounted at `/data` inside the 
 - [x] **Phase 1** — Auth: users table, password hashing, sessions, `POST /api/auth/login` + `/api/auth/logout`, `oreohouse user add` / `user list` CLI.
 - [x] **Phase 2** — WebSocket hub: authenticated `/ws?token=`, in-memory connection registry, online/offline presence broadcasts (away is deferred to Phase 7), `last_seen_at` on disconnect, client login + presence list.
 - [x] **Phase 3** — Messaging: conversations + messages tables, `POST /api/conversations/dm` find-or-create, REST history (`GET /api/conversations[/{id}/messages]`), `message` events over WS in both directions with replay-on-reconnect from a per-member delivery cursor, side-by-side client UI (presence + chat pane with composer).
-- [ ] **Phase 4** — Groups and rooms: schema + creation + member management + UI flavors
+- [x] **Phase 4** — Groups and rooms: `topic` column on conversations, REST endpoints for create/invite/leave/list-rooms/join-room, `conversation_added` + `conversation_members_changed` WS events, client UI with + Group / + Room / Browse Rooms actions and a Leave button on non-DMs.
 - [ ] **Phase 5** — File and photo uploads: REST endpoints, inline previews for images
 - [ ] **Phase 6** — Real UI: contact list as primary view, popup chat windows, system tray, taskbar flash
 - [ ] **Phase 7** — Old-school feel: nudges (window shake), typing indicators, message sounds, custom status messages

@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 3 — direct messages landed. Conversations live in SQLite (DMs auto-created on first interaction), messages are persisted with monotonic IDs, the WebSocket carries `message` events both ways with replay-on-reconnect for anything you missed while offline, and REST endpoints expose conversation list + cursor-paginated history. The client is now a real (if minimal) chat app: presence on the left, conversation thread on the right, composer + Enter to send. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 4 — groups and rooms landed. Conversations now come in three flavours: DMs (auto, 2 people), groups (private, invite-only), and rooms (public, discoverable, anyone can join). REST endpoints handle creation + member management; WebSocket pushes `conversation_added` and `conversation_members_changed` events so every connected client updates live without polling. The client got + Group / + Room / Browse Rooms actions in the left pane, a member-aware chat header, and a Leave button for non-DM conversations. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -57,7 +57,13 @@ Endpoints:
 - `POST /api/auth/logout` → idempotent, deletes the session.
 - `GET /api/conversations` → list conversations the caller is a member of (Bearer token required).
 - `POST /api/conversations/dm` → find-or-create a DM with `{ "user_id": N }`.
+- `POST /api/conversations/group` → create a group with `{ "name"?: "...", "member_ids": [N, M, ...] }`. Creator is always included.
+- `POST /api/conversations/room` → create a room with `{ "name": "...", "topic"?: "..." }`. Creator becomes the sole initial member.
+- `POST /api/conversations/{id}/members` → add `{ "user_ids": [...] }` to a group. Caller must be a member; rooms reject (use `/api/rooms/{id}/join`).
+- `POST /api/conversations/{id}/leave` → self-leave any non-DM conversation. DMs return 400.
 - `GET /api/conversations/{id}/messages?before=<id>&limit=<n>` → cursor-paginated history, newest first. Caller must be a member of the conversation; non-members get 404.
+- `GET /api/rooms` → list every room in the system with member counts, newest first.
+- `POST /api/rooms/{id}/join` → self-join a room. Idempotent.
 
 ## Authentication
 
@@ -109,7 +115,12 @@ Messaging:
 - Client posts `{"type":"message","conversation_id":N,"body":"..."}` over the WS. The server validates membership and the 4 KB body cap, persists, and broadcasts a server-side `message` envelope (with the assigned `id`, `sender`, and `created_at`) to every member of the conversation — including the sender, so all UIs add the row through one path.
 - On reconnect, after `welcome`, the server replays any messages whose `id` is greater than the receiver's per-conversation `last_delivered_message_id` cursor (advanced as live deliveries succeed). Replay completes before live messages start streaming, so order is preserved.
 
-Full message catalog (welcome, presence, message, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
+Membership events:
+
+- `conversation_added` is pushed to a user the moment they're added to a new conversation (group create, group invite, room join). It carries the full conversation view so the client can drop it straight into its list.
+- `conversation_members_changed` is pushed to the *existing* members of a conversation when its membership changes; it carries the new full member list. The change-target (the joiner / new invitee) gets `conversation_added` instead, not a parallel members-changed event.
+
+Full message catalog (welcome, presence, message, conversation_added, conversation_members_changed, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
 
 ## User management
 
@@ -238,4 +249,4 @@ cd server
 go test ./...
 ```
 
-Phase 3 brings the count to ~100 tests across `db`, `auth`, `admin`, `api`, `proto`, `ws`, `conversations`, and `messages`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
+Phase 4 brings the count to ~120 tests across `db`, `auth`, `admin`, `api`, `proto`, `ws`, `conversations`, and `messages`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
