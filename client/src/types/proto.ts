@@ -21,8 +21,12 @@ export interface UserInfo {
   // Optional display name; clients fall back to `username` when empty.
   display_name?: string;
   // True when the user has an avatar uploaded. Fetch via
-  // `${serverUrl}/api/users/${id}/avatar?token=...`.
+  // `${serverUrl}/api/users/${id}/avatar?token=...&v=<avatar_version>`.
   has_avatar?: boolean;
+  // Bumps every time the user re-uploads their avatar. The client
+  // appends it as `?v=` to bust the browser image cache without
+  // changing the canonical URL path.
+  avatar_version?: number;
 }
 
 export interface ErrorResponse {

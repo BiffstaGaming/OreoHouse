@@ -651,11 +651,7 @@ func messageToView(m messages.Message, members []conversations.Member) proto.Mes
 func senderInfo(senderID int64, members []conversations.Member) proto.UserInfo {
 	for _, mm := range members {
 		if mm.UserID == senderID {
-			return proto.UserInfo{
-				ID:        mm.UserID,
-				Username:  mm.Username,
-				CreatedAt: "",
-			}
+			return memberToUserInfo(mm)
 		}
 	}
 	// Sender no longer a member (left, deleted). Return a best-effort
@@ -666,9 +662,24 @@ func senderInfo(senderID int64, members []conversations.Member) proto.UserInfo {
 func membersToUserInfos(members []conversations.Member) []proto.UserInfo {
 	out := make([]proto.UserInfo, len(members))
 	for i, m := range members {
-		out[i] = proto.UserInfo{ID: m.UserID, Username: m.Username, CreatedAt: ""}
+		out[i] = memberToUserInfo(m)
 	}
 	return out
+}
+
+// memberToUserInfo flattens a conversations.Member into the public
+// UserInfo wire shape. CreatedAt isn't carried on Members (the column
+// isn't joined) so it's left empty — clients fall back to whatever
+// they have cached via presence / welcome.
+func memberToUserInfo(m conversations.Member) proto.UserInfo {
+	return proto.UserInfo{
+		ID:            m.UserID,
+		Username:      m.Username,
+		CreatedAt:     "",
+		DisplayName:   m.DisplayName,
+		HasAvatar:     m.AvatarAttachmentID > 0,
+		AvatarVersion: m.AvatarAttachmentID,
+	}
 }
 
 // decodeConvJSON is a smaller variant of decodeJSON tuned for these

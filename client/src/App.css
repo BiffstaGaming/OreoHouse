@@ -839,6 +839,13 @@ button:disabled {
 .emoji-picker-glyph:hover {
   background: rgba(74, 141, 232, 0.18);
 }
+.emoji-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--msn-text-muted);
+  padding: 1rem 0;
+}
 
 .composer-emoji-wrap {
   position: relative;
@@ -862,20 +869,27 @@ button:disabled {
   flex-direction: column;
 }
 
-/* Inline hover toolbar for quick reactions + "more". */
+/* Inline hover toolbar for quick reactions + "more".
+ *
+ * Anchored to the top-right of the bubble and offset up by 50% of its
+ * height — sits half-on-half-off the bubble so it never overlaps the
+ * previous message's content. Hidden by default; shown only when the
+ * .msg-row is hovered. */
 .msg-toolbar {
   position: absolute;
-  right: 0.2rem;
-  top: -1rem;
+  right: 0.5rem;
+  top: 0;
+  transform: translateY(-55%);
   display: none;
   background: var(--msn-bg-soft);
   border: 1px solid var(--msn-border);
   border-radius: 999px;
   padding: 0.1rem 0.25rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   gap: 0.05rem;
+  z-index: 5;
 }
-.msg:hover .msg-toolbar {
+.msg-row:hover .msg-toolbar {
   display: inline-flex;
 }
 .msg-toolbar-btn {
@@ -889,11 +903,21 @@ button:disabled {
 .msg-toolbar-btn:hover {
   background: rgba(74, 141, 232, 0.22);
 }
+/* Picker opened from the hover toolbar's "⊕" button. Anchored
+ * relative to the toolbar; grows DOWN by default but flips above when
+ * .flip-up is set by the runtime collision check in MessageRow. */
 .msg-toolbar-picker {
   position: absolute;
   top: 100%;
   right: 0;
   margin-top: 4px;
+  z-index: 10;
+}
+.msg-toolbar-picker.flip-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 /* --- Reaction pills under message bubbles --- */

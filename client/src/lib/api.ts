@@ -292,15 +292,21 @@ export async function deleteMyAvatar(
 
 // avatarURL builds the cache-busted URL for a user's avatar. Includes
 // the session token because <img src> can't set an Authorization
-// header. Returns null when the user doesn't have an avatar.
+// header. Appends ?v=<avatar_version> so re-uploading an avatar
+// changes the URL and forces the browser to refetch — without that,
+// the server's Cache-Control: max-age=3600 would pin the old image.
+// Returns null when the user doesn't have an avatar.
 export function avatarURL(
   serverUrl: string,
   token: string,
-  user: { id: number; has_avatar?: boolean },
+  user: { id: number; has_avatar?: boolean; avatar_version?: number },
 ): string | null {
   if (!user.has_avatar) return null;
   const url = new URL(`/api/users/${user.id}/avatar`, serverUrl);
   url.searchParams.set("token", token);
+  if (user.avatar_version) {
+    url.searchParams.set("v", String(user.avatar_version));
+  }
   return url.toString();
 }
 

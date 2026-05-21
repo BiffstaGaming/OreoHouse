@@ -698,6 +698,20 @@ function MessageRow({
   const mine = m.sender.id === session.user.id;
   const sender = userCache.get(m.sender.id) ?? m.sender;
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFlipUp, setPickerFlipUp] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+
+  // Open picker — flip upward if there isn't enough room below.
+  function openPicker() {
+    const tb = toolbarRef.current;
+    if (tb) {
+      const rect = tb.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // EmojiPicker is ~280 px tall when fully expanded.
+      setPickerFlipUp(spaceBelow < 300);
+    }
+    setPickerOpen(true);
+  }
   return (
     <div className={`msg ${mine ? "msg-mine" : ""}`}>
       <div className="msg-row">
@@ -728,7 +742,7 @@ function MessageRow({
           {reactions.length > 0 && (
             <div className="msg-reactions">
               {reactions.map((g) => {
-                const mine = g.user_ids.includes(session.user.id);
+                const isMyReaction = g.user_ids.includes(session.user.id);
                 const names = g.user_ids
                   .map((uid) => userCache.get(uid))
                   .filter((u): u is UserInfo => u !== undefined)
@@ -738,7 +752,7 @@ function MessageRow({
                   <button
                     key={g.emoji}
                     type="button"
-                    className={`msg-reaction ${mine ? "mine" : ""}`}
+                    className={`msg-reaction ${isMyReaction ? "mine" : ""}`}
                     title={names || `${g.user_ids.length} reactions`}
                     onClick={() => onReact(g.emoji)}
                   >
@@ -753,7 +767,7 @@ function MessageRow({
             <ReadTicks m={m} conv={conv} reads={reads} self={session.user} />
           )}
         </div>
-        <div className="msg-toolbar">
+        <div className="msg-toolbar" ref={toolbarRef}>
           {QUICK_REACTIONS.map((emoji) => (
             <button
               key={emoji}
@@ -769,12 +783,14 @@ function MessageRow({
             type="button"
             className="msg-toolbar-btn"
             title="More reactions"
-            onClick={() => setPickerOpen((v) => !v)}
+            onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}
           >
             ⊕
           </button>
           {pickerOpen && (
-            <div className="msg-toolbar-picker">
+            <div
+              className={`msg-toolbar-picker ${pickerFlipUp ? "flip-up" : ""}`}
+            >
               <EmojiPicker
                 onPick={(glyph) => {
                   onReact(glyph);

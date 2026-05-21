@@ -265,10 +265,11 @@ func (h *ProfileHandler) broadcastProfileChange(view proto.UserInfo) {
 
 func userToProtoInfo(u auth.User) proto.UserInfo {
 	return proto.UserInfo{
-		ID:          u.ID,
-		Username:    u.Username,
-		CreatedAt:   u.CreatedAt.UTC().Format(time.RFC3339Nano),
-		DisplayName: u.DisplayName,
-		HasAvatar:   u.AvatarAttachmentID > 0,
+		ID:            u.ID,
+		Username:      u.Username,
+		CreatedAt:     u.CreatedAt.UTC().Format(time.RFC3339Nano),
+		DisplayName:   u.DisplayName,
+		HasAvatar:     u.AvatarAttachmentID > 0,
+		AvatarVersion: u.AvatarAttachmentID,
 	}
 }

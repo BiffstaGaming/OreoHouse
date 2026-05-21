@@ -57,6 +57,7 @@ import {
   isMuted as isMutedPersisted,
   playMessageBlip,
   playNudge,
+  playReactionPop,
   setMuted as setMutedPersisted,
 } from "./lib/sounds";
 import {
@@ -423,6 +424,12 @@ function ChatScreen({
     try {
       const convs = await listConversations(session.serverUrl, session.token);
       setConversations(new Map(convs.map((c) => [c.id, c])));
+      // The REST endpoint now carries display_name + avatar_version on
+      // each member; feed the cache so contact rows render correctly
+      // before presence catches up.
+      for (const c of convs) {
+        for (const m of c.members) upsertUser(m);
+      }
     } catch (err) {
       // If the persisted token has been revoked / expired (or the
       // server has been rebuilt and lost our session row), bounce back
@@ -634,6 +641,9 @@ function ChatScreen({
           out.set(msg.conversation.id, msg.conversation);
           return out;
         });
+        // Seed userCache from the conv's members so first messages
+        // render with the right display_name + avatar.
+        for (const m of msg.conversation.members) upsertUser(m);
         // If a chat window happens to be open for this conv (shouldn't
         // be, but be defensive), let it refresh.
         if (openChatsRef.current.has(msg.conversation.id)) {
@@ -699,6 +709,31 @@ function ChatScreen({
             payload,
           );
         }
+        // Soft notification when someone reacts (add only) to one of
+        // my own messages and the conv isn't the focused window.
+        if (msg.action === "add" && msg.user.id !== session.user.id) {
+          const target = messagesRef.current
+            .get(msg.conversation_id)
+            ?.find((m) => m.id === msg.message_id);
+          if (target && target.sender.id === session.user.id) {
+            const isFocused =
+              focusedConvRef.current === msg.conversation_id;
+            if (!isFocused) {
+              playReactionPop();
+              setUnreadByConv((prev) => {
+                const out = new Map(prev);
+                out.set(
+                  msg.conversation_id,
+                  (out.get(msg.conversation_id) ?? 0) + 1,
+                );
+                return out;
+              });
+              if (!openChatsRef.current.has(msg.conversation_id)) {
+                void flashWindowIfUnfocused();
+              }
+            }
+          }
+        }
         return;
       case "read_receipt":
         setReads((prev) => {
@@ -732,6 +767,9 @@ function ChatScreen({
           out.set(msg.conversation_id, { ...existing, members: msg.members });
           return out;
         });
+        // Each member's UserInfo arrives in the broadcast — fold into
+        // the cache so future renders pick up display_name + avatar.
+        for (const m of msg.members) upsertUser(m);
         if (openChatsRef.current.has(msg.conversation_id)) {
           const payload: MembersChangedPayload = { members: msg.members };
           void emitTo(
