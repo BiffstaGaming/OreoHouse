@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,11 +23,21 @@ const (
 	TypeRoom  = "room"
 )
 
+// Validation bounds shared by group and room creation.
+const (
+	MaxNameBytes  = 64
+	MaxTopicBytes = 256
+)
+
 // Sentinel errors returned by Service methods.
 var (
-	ErrNotFound  = errors.New("conversation not found")
-	ErrNotMember = errors.New("user is not a member of this conversation")
-	ErrSelfDM    = errors.New("cannot create a DM with yourself")
+	ErrNotFound       = errors.New("conversation not found")
+	ErrNotMember      = errors.New("user is not a member of this conversation")
+	ErrSelfDM         = errors.New("cannot create a DM with yourself")
+	ErrInvalidName    = fmt.Errorf("conversation name must be 1..%d bytes (whitespace-trimmed)", MaxNameBytes)
+	ErrInvalidTopic   = fmt.Errorf("conversation topic must be <=%d bytes", MaxTopicBytes)
+	ErrNoMembers      = errors.New("at least one member (the creator) is required")
+	ErrWrongType      = errors.New("conversation type does not support this operation")
 )
 
 // Conversation is a row in the conversations table.
@@ -34,7 +45,15 @@ type Conversation struct {
 	ID        int64
 	Type      string
 	Name      string // empty when NULL (DMs always; groups/rooms optionally)
+	Topic     string // empty when NULL (DMs/groups; usually set on rooms)
 	CreatedAt time.Time
+}
+
+// RoomSummary is a Conversation plus a denormalised member_count, used
+// by the room-discovery endpoint to avoid N+1 queries.
+type RoomSummary struct {
+	Conversation
+	MemberCount int
 }
 
 // Member is a row in conversation_members, joined with the user's username
@@ -100,7 +119,7 @@ func (s *Service) FindOrCreateDM(ctx context.Context, userA, userB int64) (Conve
 	now := s.now()
 	nowStr := formatTime(now)
 	res, err := tx.ExecContext(ctx,
-		"INSERT INTO conversations (type, name, created_at) VALUES ('dm', NULL, ?)",
+		"INSERT INTO conversations (type, name, topic, created_at) VALUES ('dm', NULL, NULL, ?)",
 		nowStr)
 	if err != nil {
 		return Conversation{}, fmt.Errorf("insert conversation: %w", err)
@@ -110,9 +129,7 @@ func (s *Service) FindOrCreateDM(ctx context.Context, userA, userB int64) (Conve
 		return Conversation{}, fmt.Errorf("last insert id: %w", err)
 	}
 	for _, uid := range []int64{userA, userB} {
-		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO conversation_members (conversation_id, user_id, joined_at, last_delivered_message_id) VALUES (?, ?, ?, NULL)",
-			convID, uid, nowStr); err != nil {
+		if err := insertMemberTx(ctx, tx, convID, uid, nowStr); err != nil {
 			return Conversation{}, fmt.Errorf("insert member %d: %w", uid, err)
 		}
 	}
@@ -126,6 +143,203 @@ func (s *Service) FindOrCreateDM(ctx context.Context, userA, userB int64) (Conve
 		Name:      "",
 		CreatedAt: now,
 	}, nil
+}
+
+// CreateGroup makes a new 'group' conversation with the given members
+// (creator + others). Name is optional; trimmed and validated when
+// present. Members are deduplicated; the creator is always included.
+// Returns the new Conversation.
+func (s *Service) CreateGroup(ctx context.Context, creatorID int64, name string, memberIDs []int64) (Conversation, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName != "" {
+		if err := ValidateName(trimmedName); err != nil {
+			return Conversation{}, err
+		}
+	}
+
+	uniq := uniqueMemberSet(creatorID, memberIDs)
+	if len(uniq) == 0 {
+		return Conversation{}, ErrNoMembers
+	}
+
+	return s.createConversation(ctx, TypeGroup, trimmedName, "", uniq)
+}
+
+// CreateRoom makes a new 'room' conversation with the given name and
+// optional topic. The creator becomes the initial sole member; others
+// join via AddMember (or the REST join endpoint).
+func (s *Service) CreateRoom(ctx context.Context, creatorID int64, name, topic string) (Conversation, error) {
+	trimmedName := strings.TrimSpace(name)
+	if err := ValidateName(trimmedName); err != nil {
+		return Conversation{}, err
+	}
+	trimmedTopic := strings.TrimSpace(topic)
+	if err := ValidateTopic(trimmedTopic); err != nil {
+		return Conversation{}, err
+	}
+	return s.createConversation(ctx, TypeRoom, trimmedName, trimmedTopic, []int64{creatorID})
+}
+
+func (s *Service) createConversation(ctx context.Context, typ, name, topic string, memberIDs []int64) (Conversation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Conversation{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := s.now()
+	nowStr := formatTime(now)
+
+	var (
+		nameArg  any
+		topicArg any
+	)
+	if name != "" {
+		nameArg = name
+	}
+	if topic != "" {
+		topicArg = topic
+	}
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO conversations (type, name, topic, created_at) VALUES (?, ?, ?, ?)",
+		typ, nameArg, topicArg, nowStr)
+	if err != nil {
+		return Conversation{}, fmt.Errorf("insert conversation: %w", err)
+	}
+	convID, err := res.LastInsertId()
+	if err != nil {
+		return Conversation{}, fmt.Errorf("last insert id: %w", err)
+	}
+	for _, uid := range memberIDs {
+		if err := insertMemberTx(ctx, tx, convID, uid, nowStr); err != nil {
+			return Conversation{}, fmt.Errorf("insert member %d: %w", uid, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Conversation{}, fmt.Errorf("commit: %w", err)
+	}
+	return Conversation{
+		ID:        convID,
+		Type:      typ,
+		Name:      name,
+		Topic:     topic,
+		CreatedAt: now,
+	}, nil
+}
+
+// AddMember inserts userID into conversationID. Idempotent: a no-op
+// when the user is already a member. Returns ErrNotFound if the
+// conversation doesn't exist.
+func (s *Service) AddMember(ctx context.Context, conversationID, userID int64) error {
+	// Check the conversation exists for a friendlier error.
+	if _, err := s.Get(ctx, conversationID); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, joined_at, last_delivered_message_id) VALUES (?, ?, ?, NULL)",
+		conversationID, userID, formatTime(s.now())); err != nil {
+		return fmt.Errorf("insert member: %w", err)
+	}
+	return nil
+}
+
+// RemoveMember deletes userID from conversationID. Returns nil even
+// if the user wasn't a member.
+func (s *Service) RemoveMember(ctx context.Context, conversationID, userID int64) error {
+	if _, err := s.db.ExecContext(ctx,
+		"DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?",
+		conversationID, userID); err != nil {
+		return fmt.Errorf("delete member: %w", err)
+	}
+	return nil
+}
+
+// ListRooms returns every conversation of type 'room' in the database,
+// each with a denormalised member count. Order is most recently
+// created first.
+func (s *Service) ListRooms(ctx context.Context) ([]RoomSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT c.id, c.type, c.name, c.topic, c.created_at,
+               (SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id) AS member_count
+          FROM conversations c
+         WHERE c.type = 'room'
+      ORDER BY c.id DESC
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("query rooms: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RoomSummary
+	for rows.Next() {
+		var (
+			r         RoomSummary
+			name      sql.NullString
+			topic     sql.NullString
+			createdAt string
+		)
+		if err := rows.Scan(&r.ID, &r.Type, &name, &topic, &createdAt, &r.MemberCount); err != nil {
+			return nil, fmt.Errorf("scan room: %w", err)
+		}
+		if name.Valid {
+			r.Name = name.String
+		}
+		if topic.Valid {
+			r.Topic = topic.String
+		}
+		t, err := parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		r.CreatedAt = t
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ValidateName returns ErrInvalidName if name is empty or longer than
+// MaxNameBytes (after whitespace trim — caller should trim first).
+func ValidateName(name string) error {
+	if name == "" || len(name) > MaxNameBytes {
+		return ErrInvalidName
+	}
+	return nil
+}
+
+// ValidateTopic returns ErrInvalidTopic if topic exceeds MaxTopicBytes.
+// Empty topic is allowed.
+func ValidateTopic(topic string) error {
+	if len(topic) > MaxTopicBytes {
+		return ErrInvalidTopic
+	}
+	return nil
+}
+
+// uniqueMemberSet returns a deduplicated slice that includes creator
+// plus every id in others. Self-references are merged.
+func uniqueMemberSet(creator int64, others []int64) []int64 {
+	seen := make(map[int64]struct{}, len(others)+1)
+	out := make([]int64, 0, len(others)+1)
+	add := func(id int64) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	add(creator)
+	for _, id := range others {
+		add(id)
+	}
+	return out
+}
+
+func insertMemberTx(ctx context.Context, tx *sql.Tx, convID, userID int64, nowStr string) error {
+	_, err := tx.ExecContext(ctx,
+		"INSERT INTO conversation_members (conversation_id, user_id, joined_at, last_delivered_message_id) VALUES (?, ?, ?, NULL)",
+		convID, userID, nowStr)
+	return err
 }
 
 // Get returns a single conversation by ID. Returns ErrNotFound if no
@@ -151,7 +365,7 @@ func (s *Service) Get(ctx context.Context, id int64) (Conversation, error) {
 // messages yet fall to the bottom in creation order.
 func (s *Service) ListForUser(ctx context.Context, userID int64) ([]Conversation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT c.id, c.type, c.name, c.created_at,
+        SELECT c.id, c.type, c.name, c.topic, c.created_at,
                COALESCE(
                    (SELECT MAX(id) FROM messages WHERE conversation_id = c.id),
                    0
@@ -171,14 +385,18 @@ func (s *Service) ListForUser(ctx context.Context, userID int64) ([]Conversation
 		var (
 			c         Conversation
 			name      sql.NullString
+			topic     sql.NullString
 			createdAt string
 			lastMsgID int64
 		)
-		if err := rows.Scan(&c.ID, &c.Type, &name, &createdAt, &lastMsgID); err != nil {
+		if err := rows.Scan(&c.ID, &c.Type, &name, &topic, &createdAt, &lastMsgID); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if name.Valid {
 			c.Name = name.String
+		}
+		if topic.Valid {
+			c.Topic = topic.String
 		}
 		t, err := parseTime(createdAt)
 		if err != nil {
@@ -282,11 +500,12 @@ func getConversationTx(ctx context.Context, tx *sql.Tx, id int64) (Conversation,
 	var (
 		c         Conversation
 		name      sql.NullString
+		topic     sql.NullString
 		createdAt string
 	)
 	err := tx.QueryRowContext(ctx,
-		"SELECT id, type, name, created_at FROM conversations WHERE id = ?",
-		id).Scan(&c.ID, &c.Type, &name, &createdAt)
+		"SELECT id, type, name, topic, created_at FROM conversations WHERE id = ?",
+		id).Scan(&c.ID, &c.Type, &name, &topic, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Conversation{}, ErrNotFound
 	}
@@ -295,6 +514,9 @@ func getConversationTx(ctx context.Context, tx *sql.Tx, id int64) (Conversation,
 	}
 	if name.Valid {
 		c.Name = name.String
+	}
+	if topic.Valid {
+		c.Topic = topic.String
 	}
 	t, err := parseTime(createdAt)
 	if err != nil {
