@@ -1,0 +1,255 @@
+/* OreoHouse admin panel — vanilla CSS, MSN-flavored to match the
+   desktop client. No build step, no framework. */
+
+:root {
+  --msn-blue: #2c5dab;
+  --msn-blue-light: #4a8de8;
+  --msn-blue-dark: #1a3f7d;
+  --bg: #eef2f7;
+  --bg-card: #ffffff;
+  --text: #16223a;
+  --text-muted: #5f6b80;
+  --border: #c4d0e2;
+  --danger: #b53d3d;
+  --success: #2c7a3d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, Verdana, sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  background: linear-gradient(to bottom, var(--msn-blue-light), var(--msn-blue));
+  color: white;
+  box-shadow: 0 1px 0 var(--msn-blue-dark), inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
+.topbar-right {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+#who {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+main {
+  max-width: 60rem;
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.card h2 {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--msn-blue-dark);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+code {
+  background: #eef2f7;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.85em;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: white;
+  color: var(--text);
+  font: inherit;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+  outline: none;
+  border-color: var(--msn-blue-light);
+  box-shadow: 0 0 0 3px rgba(74, 141, 232, 0.25);
+}
+
+button {
+  background: linear-gradient(to bottom, #ffffff, #d9e6f7);
+  border: 1px solid var(--msn-blue);
+  color: var(--msn-blue-dark);
+  padding: 0.4rem 0.95rem;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #f2f7ff, #c6d8f0);
+}
+
+button:active:not(:disabled) {
+  background: linear-gradient(to bottom, #d9e6f7, #ffffff);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+th {
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #f4f7fb;
+}
+
+tbody tr:hover {
+  background: #f7faff;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #eef2f7;
+  color: var(--text-muted);
+}
+
+.badge.admin {
+  background: var(--msn-blue);
+  color: white;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+}
+
+.success {
+  color: var(--success);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+}
+
+dialog {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+  background: var(--bg-card);
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  min-width: 22rem;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+dialog form {
+  padding: 1.25rem 1.5rem;
+}
+
+dialog h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  color: var(--msn-blue-dark);
+}
+
+dialog menu {
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  list-style: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a2233;
+    --bg-card: #232c3f;
+    --text: #e8ecf3;
+    --text-muted: #98a3b8;
+    --border: #3a455e;
+  }
+  code {
+    background: #2c3650;
+  }
+  input[type="text"],
+  input[type="password"] {
+    background: #1a2233;
+    color: var(--text);
+  }
+  th {
+    background: #2c3650;
+  }
+  tbody tr:hover {
+    background: #2c3650;
+  }
+}

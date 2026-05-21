@@ -23,6 +23,7 @@ import (
 	server "github.com/BiffstaGaming/OreoHouse/server"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/api"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/api/adminui"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/attachments"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
@@ -134,6 +135,10 @@ func runServe(args []string) error {
 	adminHandler.Mount(r)
 	convsHandler.Mount(r)
 	filesHandler.Mount(r)
+	// Embedded admin web UI. Redirect the bare /admin to /admin/ so the
+	// page's relative ./app.js + ./style.css references resolve.
+	r.Handle("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
+	r.Handle("/admin/*", http.StripPrefix("/admin/", adminui.Handler()))
 
 	srv := &http.Server{
 		Addr:              *addr,

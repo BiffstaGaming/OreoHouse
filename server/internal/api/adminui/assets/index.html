@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OreoHouse Admin</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>OreoHouse Admin</h1>
+      <div class="topbar-right">
+        <span id="who"></span>
+        <button id="logout" type="button" hidden>Log out</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Login screen -->
+      <section id="login-screen" class="card" hidden>
+        <h2>Sign in</h2>
+        <p class="muted">Admin accounts only. Promote one with
+          <code>oreohouse user promote --username X</code>.</p>
+        <form id="login-form">
+          <label>
+            Username
+            <input name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Sign in</button>
+          <p id="login-error" class="error" hidden></p>
+        </form>
+      </section>
+
+      <!-- Dashboard -->
+      <section id="dashboard" hidden>
+        <div class="card">
+          <h2>Users</h2>
+          <table id="users-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Admin</th>
+                <th>Created</th>
+                <th>Last seen</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="users-body"></tbody>
+          </table>
+          <p id="users-error" class="error" hidden></p>
+        </div>
+
+        <div class="card">
+          <h2>Add user</h2>
+          <form id="add-form">
+            <label>
+              Username
+              <input name="username" type="text" required minlength="2" maxlength="32" />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" required minlength="8" />
+            </label>
+            <button type="submit">Create user</button>
+            <p id="add-error" class="error" hidden></p>
+            <p id="add-success" class="success" hidden></p>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <!-- Reset-password modal -->
+    <dialog id="reset-modal">
+      <form id="reset-form" method="dialog">
+        <h2>Reset password</h2>
+        <p>Set a new password for <strong id="reset-target"></strong>.</p>
+        <label>
+          New password
+          <input name="password" type="password" required minlength="8" />
+        </label>
+        <p id="reset-error" class="error" hidden></p>
+        <menu>
+          <button type="button" id="reset-cancel">Cancel</button>
+          <button type="submit" id="reset-submit">Set password</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
