@@ -903,9 +903,12 @@ func senderUserInfo(senderID int64, members []conversations.Member) proto.UserIn
 	return proto.UserInfo{ID: senderID}
 }
 
-// buildReplySnippet hydrates the {id, sender, body, deleted?} preview
-// the client renders above a reply. Truncates body to keep wire size
-// in check. Returns nil when replyToID is 0 or the parent is gone.
+// buildReplySnippet hydrates the {id, sender, body, deleted?,
+// attachments?} preview the client renders above a reply. Truncates
+// body to keep wire size in check. Attachments are included so the
+// quote block can show an image thumbnail / file chip when the
+// parent had no body of its own. Returns nil when replyToID is 0 or
+// the parent is gone.
 func (h *Handler) buildReplySnippet(
 	ctx context.Context, replyToID int64, members []conversations.Member,
 ) *proto.ReplySnippet {
@@ -919,17 +922,26 @@ func (h *Handler) buildReplySnippet(
 	const previewBytes = 160
 	body := parent.Body
 	deleted := !parent.DeletedAt.IsZero()
+	var atts []proto.AttachmentView
 	if deleted {
 		body = ""
+	} else {
+		// Only hydrate attachments for non-deleted messages; deleted
+		// ones render as a tombstone.
+		attsByMsg, attErr := h.attachments.ListForMessages(ctx, []int64{parent.ID})
+		if attErr == nil {
+			atts = attachmentsToViews(attsByMsg[parent.ID])
+		}
 	}
 	if len(body) > previewBytes {
 		body = body[:previewBytes]
 	}
 	return &proto.ReplySnippet{
-		ID:      parent.ID,
-		Sender:  senderUserInfo(parent.SenderID, members),
-		Body:    body,
-		Deleted: deleted,
+		ID:          parent.ID,
+		Sender:      senderUserInfo(parent.SenderID, members),
+		Body:        body,
+		Deleted:     deleted,
+		Attachments: atts,
 	}
 }
 

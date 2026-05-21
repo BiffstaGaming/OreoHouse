@@ -1032,7 +1032,11 @@ function MessageRow({
         )}
         <div className="msg-bubble">
           {m.reply_to && (
-            <ReplyQuote snippet={m.reply_to} userCache={userCache} />
+            <ReplyQuote
+              snippet={m.reply_to}
+              userCache={userCache}
+              session={session}
+            />
           )}
           <div className="msg-meta">
             <span className="msg-sender">
@@ -1219,34 +1223,62 @@ function ReadTicks({
 }
 
 // ReplyQuote renders the quoted-message block above the reply body,
-// Teams-style: sender name on top, quoted content underneath, up to
-// three lines clamped with an ellipsis. The reply's own body renders
-// in .msg-body below; the visual separation comes from the left
-// border + slightly tinted background.
+// Teams-style: sender name on top, quoted content underneath. The
+// content is whichever of these applies:
+//   - "(deleted message)" if the source was soft-deleted
+//   - The body text (clamped to 3 lines) if present
+//   - Image attachments as small thumbnails when there's no body text
+//   - File attachments as a paperclip chip when there's no body text
+// Body + attachments can co-exist; both render in that case.
 function ReplyQuote({
   snippet,
   userCache,
+  session,
 }: {
   snippet: ReplySnippet;
   userCache: Map<number, UserInfo>;
+  session: { serverUrl: string; token: string };
 }) {
   const sender = userCache.get(snippet.sender.id) ?? snippet.sender;
+  const atts = snippet.attachments ?? [];
+  const hasBody = !!snippet.body && snippet.body.length > 0;
   return (
     <div
       className="msg-quote"
-      title={snippet.deleted ? "Deleted message" : snippet.body}
+      title={snippet.deleted ? "Deleted message" : (snippet.body || atts.map((a) => a.filename).join(", "))}
     >
       <div className="msg-quote-sender">
         <span className="msg-quote-arrow">↪</span>{" "}
         {displayNameOf(sender)}
       </div>
-      <div className="msg-quote-body">
-        {snippet.deleted ? (
+      {snippet.deleted ? (
+        <div className="msg-quote-body">
           <span className="msg-quote-deleted">(deleted message)</span>
-        ) : (
-          snippet.body
-        )}
-      </div>
+        </div>
+      ) : (
+        <>
+          {hasBody && <div className="msg-quote-body">{snippet.body}</div>}
+          {atts.length > 0 && (
+            <div className="msg-quote-attachments">
+              {atts.map((a) =>
+                a.mime_type.startsWith("image/") ? (
+                  <img
+                    key={a.id}
+                    className="msg-quote-thumb"
+                    src={`${session.serverUrl}/api/files/${a.id}?token=${encodeURIComponent(session.token)}`}
+                    alt={a.filename}
+                    loading="lazy"
+                  />
+                ) : (
+                  <span key={a.id} className="msg-quote-file">
+                    📎 {a.filename}
+                  </span>
+                ),
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

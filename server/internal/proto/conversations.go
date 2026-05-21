@@ -80,12 +80,17 @@ type ReactionGroup struct {
 
 // ReplySnippet is a tiny preview of a quoted message, embedded under
 // MessageView.ReplyTo so the client can render the quote header
-// without a second fetch. Body is truncated by the server.
+// without a second fetch. Body is truncated by the server. When the
+// quoted message carried attachments, they're included here so the
+// quote block can render a thumbnail / file chip instead of an
+// empty preview (which is what you'd see quoting an image-only
+// message otherwise).
 type ReplySnippet struct {
-	ID       int64    `json:"id"`
-	Sender   UserInfo `json:"sender"`
-	Body     string   `json:"body"`
-	Deleted  bool     `json:"deleted,omitempty"`
+	ID          int64            `json:"id"`
+	Sender      UserInfo         `json:"sender"`
+	Body        string           `json:"body"`
+	Deleted     bool             `json:"deleted,omitempty"`
+	Attachments []AttachmentView `json:"attachments,omitempty"`
 }
 
 // MessageView is the JSON projection of a message.

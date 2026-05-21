@@ -363,17 +363,26 @@ func (h *ConversationsHandler) buildReplySnippet(
 	const previewBytes = 160
 	body := parent.Body
 	deleted := !parent.DeletedAt.IsZero()
+	var atts []proto.AttachmentView
 	if deleted {
 		body = ""
+	} else {
+		// Hydrate the parent's attachments so an image-only quote
+		// can render a thumbnail instead of an empty preview.
+		attsByMsg, attErr := h.attachments.ListForMessages(ctx, []int64{parent.ID})
+		if attErr == nil {
+			atts = attachmentsToViews(attsByMsg[parent.ID])
+		}
 	}
 	if len(body) > previewBytes {
 		body = body[:previewBytes]
 	}
 	return &proto.ReplySnippet{
-		ID:      parent.ID,
-		Sender:  senderInfo(parent.SenderID, members),
-		Body:    body,
-		Deleted: deleted,
+		ID:          parent.ID,
+		Sender:      senderInfo(parent.SenderID, members),
+		Body:        body,
+		Deleted:     deleted,
+		Attachments: atts,
 	}
 }
 

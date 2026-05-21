@@ -457,22 +457,54 @@
         const bubble = UI.el('div', { class: 'msg-bubble' });
 
         // Teams-style reply quote, above everything else in the bubble.
+        // Renders: sender header + (deleted placeholder OR body and/or
+        // attachment thumbnails/chips). An image-only quote shows the
+        // image preview; a file-only quote shows a 📎 chip; body + atts
+        // co-exist when both are present.
         if (m.reply_to) {
             const quoteSender = state.users.get(m.reply_to.sender.id) || m.reply_to.sender;
-            bubble.appendChild(UI.el('div', {
-                class: 'msg-quote',
-                title: m.reply_to.deleted ? 'Deleted message' : m.reply_to.body,
-            }, [
+            const quoteAtts = m.reply_to.attachments || [];
+            const hasQuoteBody = !!m.reply_to.body && m.reply_to.body.length > 0;
+            const quoteChildren = [
                 UI.el('div', { class: 'msg-quote-sender' }, [
                     UI.el('span', { class: 'msg-quote-arrow', text: '↪ ' }),
                     UI.el('span', { text: UI.displayLabel(quoteSender) }),
                 ]),
-                UI.el('div', { class: 'msg-quote-body' },
-                    m.reply_to.deleted
-                        ? UI.el('span', { class: 'msg-quote-deleted', text: '(deleted message)' })
-                        : UI.el('span', { text: m.reply_to.body || '' }),
-                ),
-            ]));
+            ];
+            if (m.reply_to.deleted) {
+                quoteChildren.push(UI.el('div', { class: 'msg-quote-body' }, [
+                    UI.el('span', { class: 'msg-quote-deleted', text: '(deleted message)' }),
+                ]));
+            } else {
+                if (hasQuoteBody) {
+                    quoteChildren.push(UI.el('div', { class: 'msg-quote-body', text: m.reply_to.body }));
+                }
+                if (quoteAtts.length > 0) {
+                    const attsWrap = UI.el('div', { class: 'msg-quote-attachments' });
+                    quoteAtts.forEach(function (a) {
+                        if (UI.isImageMime(a.mime_type)) {
+                            attsWrap.appendChild(UI.el('img', {
+                                class: 'msg-quote-thumb',
+                                src: API.fileURL(a.id),
+                                alt: a.filename,
+                                loading: 'lazy',
+                            }));
+                        } else {
+                            attsWrap.appendChild(UI.el('span', {
+                                class: 'msg-quote-file',
+                                text: '📎 ' + a.filename,
+                            }));
+                        }
+                    });
+                    quoteChildren.push(attsWrap);
+                }
+            }
+            bubble.appendChild(UI.el('div', {
+                class: 'msg-quote',
+                title: m.reply_to.deleted
+                    ? 'Deleted message'
+                    : (m.reply_to.body || quoteAtts.map(function (a) { return a.filename; }).join(', ')),
+            }, quoteChildren));
         }
 
         if (!groupWithPrev) {

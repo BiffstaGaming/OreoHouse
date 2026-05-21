@@ -228,11 +228,14 @@ export interface MessageDeletedMessage {
 
 // Embedded quote preview on a reply message. Body is server-truncated
 // to ~160 bytes; deleted=true means the original was soft-deleted.
+// Attachments are included so an image-only quote can render a
+// thumbnail / file chip instead of an empty preview.
 export interface ReplySnippet {
   id: number;
   sender: UserInfo;
   body: string;
   deleted?: boolean;
+  attachments?: AttachmentView[];
 }
 
 // Client→server: pin/unpin a message in a conversation. Server
