@@ -33,6 +33,7 @@ const DefaultReplayLimit = 500
 var (
 	ErrBodyEmpty   = errors.New("message body is empty")
 	ErrBodyTooLong = fmt.Errorf("message body exceeds %d bytes", MaxBodyBytes)
+	ErrNotFound    = errors.New("message not found")
 )
 
 // Message is a row in the messages table.
@@ -135,6 +136,30 @@ func (s *Service) HistoryPage(ctx context.Context, conversationID, beforeID int6
 	}
 	defer rows.Close()
 	return scanMessages(rows)
+}
+
+// Get returns a single message by ID; ErrNotFound if absent.
+func (s *Service) Get(ctx context.Context, id int64) (Message, error) {
+	var (
+		m         Message
+		createdAt string
+	)
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, conversation_id, sender_id, body, created_at FROM messages WHERE id = ?",
+		id,
+	).Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, ErrNotFound
+	}
+	if err != nil {
+		return Message{}, fmt.Errorf("querying message: %w", err)
+	}
+	t, err := parseTime(createdAt)
+	if err != nil {
+		return Message{}, fmt.Errorf("parse created_at: %w", err)
+	}
+	m.CreatedAt = t
+	return m, nil
 }
 
 // Since returns at most `limit` messages in conversationID with id >

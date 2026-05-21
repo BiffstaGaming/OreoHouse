@@ -23,6 +23,7 @@ import (
 	server "github.com/BiffstaGaming/OreoHouse/server"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/api"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/attachments"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
@@ -78,6 +79,7 @@ func runServe(args []string) error {
 	addr := fs.String("addr", envOr("OREOHOUSE_ADDR", defaultAddr), "HTTP listen address (also OREOHOUSE_ADDR)")
 	dataDir := fs.String("data-dir", envOr("OREOHOUSE_DATA_DIR", defaultDataDir), "data directory for SQLite + uploads (also OREOHOUSE_DATA_DIR)")
 	sessionTTLDays := fs.Int("session-ttl-days", envOrInt("OREOHOUSE_SESSION_TTL_DAYS", 0), "session token lifetime in days; 0 = never expire (also OREOHOUSE_SESSION_TTL_DAYS)")
+	maxUploadMB := fs.Int("max-upload-mb", envOrInt("OREOHOUSE_MAX_UPLOAD_MB", 25), "per-upload size cap in MiB (also OREOHOUSE_MAX_UPLOAD_MB)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -93,11 +95,16 @@ func runServe(args []string) error {
 	authSvc := auth.NewService(sqlDB, daysAsDuration(*sessionTTLDays))
 	convsSvc := conversations.NewService(sqlDB)
 	msgsSvc := messages.NewService(sqlDB)
+	attachmentsSvc, err := attachments.NewService(sqlDB, filepath.Join(*dataDir, "uploads"))
+	if err != nil {
+		return fmt.Errorf("creating attachments service: %w", err)
+	}
 
 	authHandler := api.NewAuthHandler(authSvc)
 
 	hub := ws.NewHub()
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, hub)
+	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)
@@ -124,6 +131,7 @@ func runServe(args []string) error {
 	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
 	convsHandler.Mount(r)
+	filesHandler.Mount(r)
 
 	srv := &http.Server{
 		Addr:              *addr,

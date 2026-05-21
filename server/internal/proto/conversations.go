@@ -47,6 +47,18 @@ type ListRoomsResponse struct {
 	Rooms []RoomView `json:"rooms"`
 }
 
+// AttachmentView is the JSON projection of an attachment row, used
+// both in upload responses and as the nested attachment list on
+// MessageView / OutgoingMessage.
+type AttachmentView struct {
+	ID          int64  `json:"id"`
+	Filename    string `json:"filename"`
+	MimeType    string `json:"mime_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	ImageWidth  int    `json:"image_width,omitempty"`
+	ImageHeight int    `json:"image_height,omitempty"`
+}
+
 // ListConversationsResponse is the body of GET /api/conversations.
 type ListConversationsResponse struct {
 	Conversations []ConversationView `json:"conversations"`
