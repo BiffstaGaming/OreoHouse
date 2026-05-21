@@ -47,8 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="login-body">
 <main class="login-card">
     <div class="login-brand">
-        <div class="brand-mark">🍪</div>
-        <h1>OreoHouse</h1>
+        <img class="brand-logo" src="/assets/img/logo.png" alt="OreoHouse" />
         <p class="subtitle">Family chat — web edition</p>
     </div>
 

@@ -131,6 +131,31 @@
         return global.OREO.serverUrl + '/api/files/' + attachmentID + '?token=' + t;
     }
 
+    // --- search + media/links ------------------------------------------
+
+    async function searchMessages(query) {
+        const url = new URL('/api/search', global.OREO.serverUrl);
+        url.searchParams.set('q', query);
+        const res = await fetch(url.toString(), { headers: authHeader() });
+        if (res.status === 401) {
+            window.location.href = '/logout.php';
+            throw new Error('session expired');
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const body = await res.json();
+        return body.results || [];
+    }
+
+    async function listConversationMedia(conversationID) {
+        const r = await request('GET', '/api/conversations/' + conversationID + '/media');
+        return (r && r.items) || [];
+    }
+
+    async function listConversationLinks(conversationID) {
+        const r = await request('GET', '/api/conversations/' + conversationID + '/links');
+        return (r && r.items) || [];
+    }
+
     global.OreoAPI = {
         listConversations: listConversations,
         listMessages: listMessages,
@@ -147,5 +172,8 @@
         avatarURL: avatarURL,
         uploadFile: uploadFile,
         fileURL: fileURL,
+        searchMessages: searchMessages,
+        listConversationMedia: listConversationMedia,
+        listConversationLinks: listConversationLinks,
     };
 })(window);
