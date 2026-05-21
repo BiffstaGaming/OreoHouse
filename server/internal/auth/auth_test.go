@@ -302,6 +302,169 @@ func TestNewSessionToken_Unique(t *testing.T) {
 	}
 }
 
+func TestCreateUser_DefaultsToNonAdmin(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.IsAdmin {
+		t.Errorf("expected freshly-created user to default to non-admin")
+	}
+	// Authenticate should round-trip is_admin=false too.
+	got, err := svc.Authenticate(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if got.IsAdmin {
+		t.Errorf("Authenticate: expected IsAdmin=false")
+	}
+}
+
+func TestSetAdmin_PromoteAndDemote(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	a, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser alice: %v", err)
+	}
+	b, err := svc.CreateUser(ctx, "bob", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+
+	if err := svc.SetAdmin(ctx, a.ID, true); err != nil {
+		t.Fatalf("promote alice: %v", err)
+	}
+	if err := svc.SetAdmin(ctx, b.ID, true); err != nil {
+		t.Fatalf("promote bob: %v", err)
+	}
+	if n, err := svc.CountAdmins(ctx); err != nil || n != 2 {
+		t.Fatalf("CountAdmins after two promotes: n=%d err=%v", n, err)
+	}
+
+	if err := svc.SetAdmin(ctx, b.ID, false); err != nil {
+		t.Fatalf("demote bob: %v", err)
+	}
+	if n, err := svc.CountAdmins(ctx); err != nil || n != 1 {
+		t.Fatalf("CountAdmins after one demote: n=%d err=%v", n, err)
+	}
+
+	// Refuse to demote the last admin.
+	if err := svc.SetAdmin(ctx, a.ID, false); !errors.Is(err, ErrLastAdmin) {
+		t.Errorf("expected ErrLastAdmin demoting last admin, got %v", err)
+	}
+	// And alice is still an admin afterwards.
+	got, err := svc.GetUserByUsername(ctx, "alice")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if !got.IsAdmin {
+		t.Errorf("expected alice still admin after failed demote")
+	}
+}
+
+func TestSetAdmin_UnknownUser(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	if err := svc.SetAdmin(ctx, 999, true); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound for unknown id, got %v", err)
+	}
+}
+
+func TestSetPassword_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := svc.SetPassword(ctx, u.ID, "brandnewpw!"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	// Old password no longer works.
+	if _, err := svc.Authenticate(ctx, "alice", "hunter2hunter"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("expected ErrInvalidCredentials with old password, got %v", err)
+	}
+	// New password does.
+	if _, err := svc.Authenticate(ctx, "alice", "brandnewpw!"); err != nil {
+		t.Errorf("Authenticate with new password: %v", err)
+	}
+}
+
+func TestSetPassword_ValidationAndUnknownUser(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	u, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := svc.SetPassword(ctx, u.ID, "short"); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("expected ErrPasswordTooShort, got %v", err)
+	}
+	if err := svc.SetPassword(ctx, 999, "longenough"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestGetUserByUsername(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	created, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	got, err := svc.GetUserByUsername(ctx, "alice")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("expected id %d, got %d", created.ID, got.ID)
+	}
+	if _, err := svc.GetUserByUsername(ctx, "ghost"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestListUsersDetail(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	if _, err := svc.CreateUser(ctx, "alice", "hunter2hunter"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	bob, err := svc.CreateUser(ctx, "bob", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	if err := svc.UpdateLastSeen(ctx, bob.ID, now); err != nil {
+		t.Fatalf("UpdateLastSeen: %v", err)
+	}
+	if err := svc.SetAdmin(ctx, bob.ID, true); err != nil {
+		t.Fatalf("SetAdmin: %v", err)
+	}
+	out, err := svc.ListUsersDetail(ctx)
+	if err != nil {
+		t.Fatalf("ListUsersDetail: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(out))
+	}
+	if !out[0].LastSeenAt.IsZero() {
+		t.Errorf("expected alice LastSeenAt zero, got %v", out[0].LastSeenAt)
+	}
+	if out[0].IsAdmin {
+		t.Errorf("expected alice not admin")
+	}
+	if out[1].Username != "bob" || !out[1].IsAdmin {
+		t.Errorf("expected bob admin, got %+v", out[1])
+	}
+	if !out[1].LastSeenAt.Equal(now) {
+		t.Errorf("expected bob LastSeenAt=%v, got %v", now, out[1].LastSeenAt)
+	}
+}
+
 func TestSessionExpired(t *testing.T) {
 	base := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
