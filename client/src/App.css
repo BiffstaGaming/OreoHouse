@@ -184,9 +184,114 @@ button:disabled {
   background: #16a34a;
 }
 
+.dot-away {
+  background: #f59e0b;
+}
+
+.dot-busy {
+  background: #dc2626;
+}
+
 .dot-offline {
   background: transparent;
   border: 1px solid rgba(127, 127, 127, 0.55);
+}
+
+.contact-status-text {
+  flex: 1;
+  font-size: 0.78rem;
+  opacity: 0.6;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Status menu in the topbar --- */
+
+.status-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 1rem;
+  background: rgba(127, 127, 127, 0.08);
+  font: inherit;
+  font-size: 0.8rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.status-chip:hover {
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.status-text-inline {
+  opacity: 0.65;
+  font-style: italic;
+}
+
+.status-popover {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.4rem;
+  background: var(--popover-bg, #ffffff);
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 0.4rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  min-width: 14rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-popover {
+    background: #1f2024;
+  }
+}
+
+.status-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.status-option:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.status-option.selected {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.status-text-row {
+  margin-top: 0.4rem;
+  border-top: 1px solid rgba(127, 127, 127, 0.2);
+  padding-top: 0.4rem;
+}
+
+.status-text-row input {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  box-sizing: border-box;
 }
 
 .conv-icon {

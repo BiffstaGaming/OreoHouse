@@ -11,13 +11,29 @@ const (
 	TypeMessage                    = "message"
 	TypeConversationAdded          = "conversation_added"
 	TypeConversationMembersChanged = "conversation_members_changed"
+	TypeStatus                     = "status"
 )
 
-// Presence status values for PresenceMessage.Status.
+// Presence state values for PresenceMessage.State and
+// PresenceInfo.State. "offline" only appears in PresenceMessage
+// deltas — it never shows up in the welcome snapshot.
 const (
-	StatusOnline  = "online"
-	StatusOffline = "offline"
+	StateOnline  = "online"
+	StateAway    = "away"
+	StateBusy    = "busy"
+	StateOffline = "offline"
 )
+
+// ValidUserState reports whether s is a state value the server will
+// accept from a client `status` event. "offline" is reserved for the
+// server to emit when a user's last connection closes.
+func ValidUserState(s string) bool {
+	switch s {
+	case StateOnline, StateAway, StateBusy:
+		return true
+	}
+	return false
+}
 
 // Stable error codes used in ErrorMessage.Code. Clients can branch on
 // these without parsing the human-readable Message.
@@ -33,22 +49,47 @@ type Envelope struct {
 	Type string `json:"type"`
 }
 
+// PresenceInfo is the snapshot shape used inside WelcomeMessage.online
+// — one row per currently-online user, carrying their User plus the
+// discrete state (online/away/busy) and optional custom message.
+type PresenceInfo struct {
+	User       UserInfo `json:"user"`
+	State      string   `json:"state"`
+	CustomText string   `json:"custom_text,omitempty"`
+}
+
 // WelcomeMessage is sent server→client immediately after a successful
 // /ws upgrade. It snapshots current presence so the client can build
 // its initial UI without polling.
 type WelcomeMessage struct {
-	Type   string     `json:"type"`
-	You    UserInfo   `json:"you"`
-	Online []UserInfo `json:"online"`
+	Type   string         `json:"type"`
+	You    UserInfo       `json:"you"`
+	Online []PresenceInfo `json:"online"`
 }
 
-// PresenceMessage is broadcast to every online client when a user's
-// presence flips. A user is "online" if they have ≥1 active WS
-// connection.
+// PresenceMessage is broadcast to every online client whenever a
+// user's presence changes — they came online, went offline, or
+// changed their state / custom message while online.
+//
+// State is one of StateOnline / StateAway / StateBusy / StateOffline.
+// CustomText is empty when not set; it is also not meaningful when
+// State == StateOffline (the client should drop the user from its
+// online map in that case).
 type PresenceMessage struct {
-	Type   string   `json:"type"`
-	User   UserInfo `json:"user"`
-	Status string   `json:"status"` // StatusOnline or StatusOffline
+	Type       string   `json:"type"`
+	User       UserInfo `json:"user"`
+	State      string   `json:"state"`
+	CustomText string   `json:"custom_text,omitempty"`
+}
+
+// StatusMessage is the client→server "status" envelope — set my
+// state and/or custom message. The server validates State (online/
+// away/busy only — "offline" is reserved) and broadcasts a
+// PresenceMessage to all online clients.
+type StatusMessage struct {
+	Type       string `json:"type"`
+	State      string `json:"state"`
+	CustomText string `json:"custom_text"`
 }
 
 // ErrorMessage is sent server→client immediately before a connection

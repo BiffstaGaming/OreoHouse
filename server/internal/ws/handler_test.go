@@ -157,8 +157,11 @@ func TestHandler_SendsWelcomeOnConnect(t *testing.T) {
 	if msg.You.ID != alice.ID || msg.You.Username != "alice" {
 		t.Errorf("welcome.you mismatch: got %+v", msg.You)
 	}
-	if len(msg.Online) != 1 || msg.Online[0].ID != alice.ID {
+	if len(msg.Online) != 1 || msg.Online[0].User.ID != alice.ID {
 		t.Errorf("expected online=[alice], got %+v", msg.Online)
+	}
+	if msg.Online[0].State != proto.StateOnline {
+		t.Errorf("expected initial state=online, got %q", msg.Online[0].State)
 	}
 }
 
@@ -187,7 +190,7 @@ func TestHandler_BroadcastsPresenceOnFirstConnect(t *testing.T) {
 	if err := json.Unmarshal(raw, &pres); err != nil {
 		t.Fatalf("decode presence: %v", err)
 	}
-	if pres.User.ID != bob.ID || pres.Status != proto.StatusOnline {
+	if pres.User.ID != bob.ID || pres.State != proto.StateOnline {
 		t.Errorf("expected presence(bob,online), got %+v", pres)
 	}
 }
@@ -225,7 +228,7 @@ func TestHandler_NoPresenceOnSecondConnection(t *testing.T) {
 	if err := json.Unmarshal(raw, &pres); err != nil {
 		t.Fatalf("decode presence: %v", err)
 	}
-	if pres.User.ID != alice.ID || pres.Status != proto.StatusOffline {
+	if pres.User.ID != alice.ID || pres.State != proto.StateOffline {
 		t.Errorf("expected presence(alice,offline) as first new message after second-conn dance; got %+v", pres)
 	}
 }
@@ -271,7 +274,7 @@ func TestHandler_BroadcastsOfflineOnLastDisconnect(t *testing.T) {
 	if err := json.Unmarshal(raw, &pres); err != nil {
 		t.Fatalf("decode presence: %v", err)
 	}
-	if pres.User.ID != alice.ID || pres.Status != proto.StatusOffline {
+	if pres.User.ID != alice.ID || pres.State != proto.StateOffline {
 		t.Errorf("expected presence(alice,offline), got %+v", pres)
 	}
 }

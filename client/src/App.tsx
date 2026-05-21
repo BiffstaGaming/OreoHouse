@@ -34,9 +34,11 @@ import type {
   ConversationView,
   MessageView,
   OutgoingMessage,
+  PresenceInfo,
   RoomView,
   ServerMessage,
   UserInfo,
+  UserState,
 } from "./types/proto";
 
 import "./App.css";
@@ -155,7 +157,9 @@ function ChatScreen({
   onSignOut: () => void;
 }) {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
-  const [online, setOnline] = useState<UserInfo[]>([]);
+  const [online, setOnline] = useState<PresenceInfo[]>([]);
+  const [myState, setMyState] = useState<UserState>("online");
+  const [myCustomText, setMyCustomText] = useState<string>("");
   const [conversations, setConversations] = useState<
     Map<number, ConversationView>
   >(new Map());
@@ -216,16 +220,34 @@ function ChatScreen({
   function handleServerMessage(msg: ServerMessage) {
     switch (msg.type) {
       case "welcome":
-        setOnline(sortByUsername(msg.online));
+        setOnline(sortPresence(msg.online));
+        // Initialise our own status panel from the snapshot.
+        {
+          const me = msg.online.find((p) => p.user.id === session.user.id);
+          if (me) {
+            setMyState(me.state);
+            setMyCustomText(me.custom_text ?? "");
+          }
+        }
         return;
       case "presence":
         setOnline((prev) => {
-          if (msg.status === "online") {
-            if (prev.some((u) => u.id === msg.user.id)) return prev;
-            return sortByUsername([...prev, msg.user]);
+          if (msg.state === "offline") {
+            return prev.filter((p) => p.user.id !== msg.user.id);
           }
-          return prev.filter((u) => u.id !== msg.user.id);
+          const next = prev.filter((p) => p.user.id !== msg.user.id);
+          next.push({
+            user: msg.user,
+            state: msg.state,
+            custom_text: msg.custom_text,
+          });
+          return sortPresence(next);
         });
+        // If it's about me (e.g. from another tab), mirror it locally.
+        if (msg.user.id === session.user.id && msg.state !== "offline") {
+          setMyState(msg.state);
+          setMyCustomText(msg.custom_text ?? "");
+        }
         return;
       case "message":
         appendMessage(msg);
@@ -430,6 +452,19 @@ function ChatScreen({
     });
   }
 
+  function updateStatus(state: UserState, customText: string) {
+    if (state === "offline") return; // server rejects this
+    setMyState(state);
+    setMyCustomText(customText);
+    if (wsRef.current) {
+      wsRef.current.send({
+        type: "status",
+        state,
+        custom_text: customText,
+      });
+    }
+  }
+
   async function handleLeave(conv: ConversationView) {
     try {
       await leaveConversation(session.serverUrl, session.token, conv.id);
@@ -488,6 +523,11 @@ function ChatScreen({
       <header className="topbar">
         <div className="me">
           <strong>{session.user.username}</strong>
+          <StatusMenu
+            state={myState}
+            customText={myCustomText}
+            onChange={updateStatus}
+          />
           <span className={`ws-status ws-status-${status}`}>{status}</span>
         </div>
         <button type="button" onClick={handleSignOut}>
@@ -551,7 +591,7 @@ function ChatScreen({
           <NewGroupForm
             session={session}
             self={session.user}
-            online={online}
+            online={online.map((p) => p.user)}
             onCreated={(c) => {
               setConversations((prev) => new Map(prev).set(c.id, c));
               setModal(null);
@@ -607,7 +647,7 @@ function ContactList({
   onBrowseRooms,
 }: {
   self: UserInfo;
-  online: UserInfo[];
+  online: PresenceInfo[];
   conversations: Map<number, ConversationView>;
   unreadByConv: Map<number, number>;
   onPickUser: (u: UserInfo) => void;
@@ -616,7 +656,7 @@ function ContactList({
   onNewRoom: () => void;
   onBrowseRooms: () => void;
 }) {
-  const onlineIDs = new Set(online.map((u) => u.id));
+  const onlineIDs = new Set(online.map((p) => p.user.id));
 
   // Map every DM partner -> their UserInfo (lifted from conversation
   // membership), and the corresponding conversation id so we can route
@@ -631,8 +671,8 @@ function ContactList({
     dmConvByUser.set(other.id, c);
   }
 
-  const onlineOthers = sortByUsername(
-    online.filter((u) => u.id !== self.id),
+  const onlineOthers = sortPresence(
+    online.filter((p) => p.user.id !== self.id),
   );
   const offlineContacts = sortByUsername(
     Array.from(dmContactMap.values()).filter((u) => !onlineIDs.has(u.id)),
@@ -657,13 +697,14 @@ function ContactList({
           <p className="empty">Nobody else is here.</p>
         ) : (
           <ul>
-            {onlineOthers.map((u) => (
+            {onlineOthers.map((p) => (
               <ContactRow
-                key={u.id}
-                user={u}
-                online
-                unread={unreadForUser(u)}
-                onClick={() => onPickUser(u)}
+                key={p.user.id}
+                user={p.user}
+                state={p.state}
+                customText={p.custom_text}
+                unread={unreadForUser(p.user)}
+                onClick={() => onPickUser(p.user)}
               />
             ))}
           </ul>
@@ -680,7 +721,7 @@ function ContactList({
               <ContactRow
                 key={u.id}
                 user={u}
-                online={false}
+                state="offline"
                 unread={unreadForUser(u)}
                 onClick={() => onPickUser(u)}
               />
@@ -726,24 +767,116 @@ function ContactList({
 
 function ContactRow({
   user,
-  online,
+  state,
+  customText,
   unread,
   onClick,
 }: {
   user: UserInfo;
-  online: boolean;
+  state: UserState;
+  customText?: string;
   unread: number;
   onClick: () => void;
 }) {
   return (
     <li>
       <button type="button" className="contact-row" onClick={onClick}>
-        <span className={`dot ${online ? "dot-online" : "dot-offline"}`} />
+        <span className={`dot dot-${state}`} title={state} />
         <span className="contact-name">{user.username}</span>
+        {customText && (
+          <span className="contact-status-text" title={customText}>
+            {customText}
+          </span>
+        )}
         {unread > 0 && <span className="unread-badge">{unread}</span>}
       </button>
     </li>
   );
+}
+
+// StatusMenu — the topbar dropdown for setting your own state +
+// custom message. Click the chip to open; pick a state or edit the
+// text (Enter / blur to save).
+function StatusMenu({
+  state,
+  customText,
+  onChange,
+}: {
+  state: UserState;
+  customText: string;
+  onChange: (state: UserState, customText: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftText, setDraftText] = useState(customText);
+
+  useEffect(() => setDraftText(customText), [customText]);
+
+  function pickState(s: UserState) {
+    onChange(s, draftText);
+    setOpen(false);
+  }
+
+  function commitText() {
+    if (draftText !== customText) onChange(state, draftText);
+  }
+
+  return (
+    <div className="status-menu">
+      <button
+        type="button"
+        className="status-chip"
+        onClick={() => setOpen((v) => !v)}
+        title="Set status"
+      >
+        <span className={`dot dot-${state}`} />
+        <span>{stateLabel(state)}</span>
+        {customText && <span className="status-text-inline">— {customText}</span>}
+      </button>
+      {open && (
+        <div className="status-popover">
+          {(["online", "away", "busy"] as UserState[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`status-option ${s === state ? "selected" : ""}`}
+              onClick={() => pickState(s)}
+            >
+              <span className={`dot dot-${s}`} />
+              {stateLabel(s)}
+            </button>
+          ))}
+          <div className="status-text-row">
+            <input
+              value={draftText}
+              onChange={(e) => setDraftText(e.target.value)}
+              onBlur={commitText}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  commitText();
+                  setOpen(false);
+                }
+              }}
+              placeholder="Custom message"
+              maxLength={256}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function stateLabel(s: UserState): string {
+  switch (s) {
+    case "online":
+      return "Online";
+    case "away":
+      return "Away";
+    case "busy":
+      return "Busy";
+    case "offline":
+      return "Offline";
+  }
 }
 
 function ConvRow({
@@ -1447,6 +1580,12 @@ function BrowseRoomsView({
 
 function sortByUsername(users: UserInfo[]): UserInfo[] {
   return [...users].sort((a, b) => a.username.localeCompare(b.username));
+}
+
+function sortPresence(rows: PresenceInfo[]): PresenceInfo[] {
+  return [...rows].sort((a, b) =>
+    a.user.username.localeCompare(b.user.username),
+  );
 }
 
 function sortConversations(convs: ConversationView[]): ConversationView[] {

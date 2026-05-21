@@ -99,7 +99,7 @@ func (h *Handler) serve(parentCtx context.Context, conn *websocket.Conn, user au
 	defer func() {
 		lastConn := h.hub.Unregister(client)
 		if lastConn {
-			h.broadcastPresence(user, proto.StatusOffline)
+			h.broadcastPresence(user, proto.StateOffline, "")
 			// Best-effort last_seen update. Use a fresh background
 			// context — the request context may already be cancelled.
 			bg, bgCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -110,6 +110,17 @@ func (h *Handler) serve(parentCtx context.Context, conn *websocket.Conn, user au
 		}
 	}()
 
+	// Seed discrete state for this user's first connection. Custom
+	// text persists across sessions (loaded from DB); state defaults
+	// to "online" each new session.
+	if firstConn {
+		text, err := h.auth.GetStatusText(ctx, user.ID)
+		if err != nil {
+			slog.Warn("ws: load status_text failed", "error", err, "user_id", user.ID)
+		}
+		h.hub.SetPresence(user.ID, proto.StateOnline, text)
+	}
+
 	// Welcome is sent inline (no writer goroutine yet) — it's safe
 	// because we're the only writer on this connection at this point.
 	if err := h.sendWelcome(ctx, conn, user); err != nil {
@@ -118,7 +129,10 @@ func (h *Handler) serve(parentCtx context.Context, conn *websocket.Conn, user au
 	}
 
 	if firstConn {
-		h.broadcastPresence(user, proto.StatusOnline)
+		// Use the seeded state for the broadcast — text from DB,
+		// state defaults to online (we just set it).
+		_, text, _ := h.currentPresence(user.ID)
+		h.broadcastPresence(user, proto.StateOnline, text)
 	}
 
 	// Replay any messages that arrived while the user was offline,
@@ -151,7 +165,7 @@ func (h *Handler) sendWelcome(ctx context.Context, conn *websocket.Conn, user au
 	msg := proto.WelcomeMessage{
 		Type:   proto.TypeWelcome,
 		You:    userToInfo(user),
-		Online: usersToInfos(h.hub.OnlineUsers()),
+		Online: presenceToInfos(h.hub.OnlineUsers()),
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -160,11 +174,12 @@ func (h *Handler) sendWelcome(ctx context.Context, conn *websocket.Conn, user au
 	return conn.Write(ctx, websocket.MessageText, b)
 }
 
-func (h *Handler) broadcastPresence(user auth.User, status string) {
+func (h *Handler) broadcastPresence(user auth.User, state, customText string) {
 	msg := proto.PresenceMessage{
-		Type:   proto.TypePresence,
-		User:   userToInfo(user),
-		Status: status,
+		Type:       proto.TypePresence,
+		User:       userToInfo(user),
+		State:      state,
+		CustomText: customText,
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -172,6 +187,18 @@ func (h *Handler) broadcastPresence(user auth.User, status string) {
 		return
 	}
 	h.hub.Broadcast(b)
+}
+
+// currentPresence reads the live hub-tracked state for userID via a
+// snapshot. Returns (state, customText, ok). ok is false when the
+// user is no longer online.
+func (h *Handler) currentPresence(userID int64) (string, string, bool) {
+	for _, p := range h.hub.OnlineUsers() {
+		if p.User.ID == userID {
+			return p.State, p.CustomText, true
+		}
+	}
+	return "", "", false
 }
 
 // reader runs on the request goroutine. It returns when the
@@ -196,10 +223,43 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.queueSend(c, pong)
 		case proto.TypeMessage:
 			h.handleIncomingMessage(ctx, c, data)
+		case proto.TypeStatus:
+			h.handleStatus(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
 		}
+	}
+}
+
+// handleStatus updates the sender's discrete state and custom text.
+// On a real change, the new presence is broadcast to all connected
+// clients (so contact lists update live). Custom text is persisted
+// in the users table so it survives reconnects.
+func (h *Handler) handleStatus(ctx context.Context, c *Client, raw []byte) {
+	var in proto.StatusMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid status body")
+		return
+	}
+	if !proto.ValidUserState(in.State) {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid state value")
+		return
+	}
+	const maxStatusTextBytes = 256
+	if len(in.CustomText) > maxStatusTextBytes {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage,
+			"custom_text exceeds 256 bytes")
+		return
+	}
+
+	if err := h.auth.SetStatusText(ctx, c.user.ID, in.CustomText); err != nil {
+		slog.Error("ws: set status_text failed", "error", err, "user_id", c.user.ID)
+		// Don't bail — in-memory update is more important than persistence
+	}
+	changed := h.hub.SetPresence(c.user.ID, in.State, in.CustomText)
+	if changed {
+		h.broadcastPresence(c.user, in.State, in.CustomText)
 	}
 }
 
@@ -479,6 +539,20 @@ func usersToInfos(us []auth.User) []proto.UserInfo {
 	out := make([]proto.UserInfo, len(us))
 	for i, u := range us {
 		out[i] = userToInfo(u)
+	}
+	return out
+}
+
+// presenceToInfos maps a hub OnlineUsers snapshot to the proto
+// PresenceInfo[] used inside WelcomeMessage.online.
+func presenceToInfos(ps []UserPresence) []proto.PresenceInfo {
+	out := make([]proto.PresenceInfo, len(ps))
+	for i, p := range ps {
+		out[i] = proto.PresenceInfo{
+			User:       userToInfo(p.User),
+			State:      p.State,
+			CustomText: p.CustomText,
+		}
 	}
 	return out
 }

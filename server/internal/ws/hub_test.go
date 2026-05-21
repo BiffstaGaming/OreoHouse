@@ -72,8 +72,8 @@ func TestHub_OnlineUsersUniquePerUserID(t *testing.T) {
 		t.Fatalf("expected 2 unique online users, got %d", len(online))
 	}
 	ids := map[int64]bool{}
-	for _, u := range online {
-		ids[u.ID] = true
+	for _, p := range online {
+		ids[p.User.ID] = true
 	}
 	if !ids[1] || !ids[2] {
 		t.Errorf("expected ids 1 and 2 in OnlineUsers, got %+v", online)

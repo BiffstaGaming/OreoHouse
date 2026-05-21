@@ -254,6 +254,41 @@ func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, at time.Time
 	return nil
 }
 
+// SetStatusText persists the user's custom status text. An empty
+// string clears it.
+func (s *Service) SetStatusText(ctx context.Context, userID int64, text string) error {
+	var arg any
+	if text == "" {
+		arg = nil
+	} else {
+		arg = text
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE users SET status_text = ? WHERE id = ?",
+		arg, userID); err != nil {
+		return fmt.Errorf("updating status_text: %w", err)
+	}
+	return nil
+}
+
+// GetStatusText returns the user's persisted custom status text, or
+// "" when NULL. Returns no error and "" for unknown users.
+func (s *Service) GetStatusText(ctx context.Context, userID int64) (string, error) {
+	var text sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		"SELECT status_text FROM users WHERE id = ?", userID).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("querying status_text: %w", err)
+	}
+	if !text.Valid {
+		return "", nil
+	}
+	return text.String, nil
+}
+
 // DeleteSession deletes the session with the given token. Returns nil
 // even if no session matches (logout is idempotent).
 func (s *Service) DeleteSession(ctx context.Context, token string) error {

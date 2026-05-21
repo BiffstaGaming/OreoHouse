@@ -38,26 +38,52 @@ export const MessageType = {
   Message: "message",
   ConversationAdded: "conversation_added",
   ConversationMembersChanged: "conversation_members_changed",
+  Status: "status",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
-export const PresenceStatus = {
+// User state values that appear in PresenceInfo.state and
+// PresenceMessage.state. "offline" only appears in presence deltas —
+// never in the welcome snapshot.
+export const UserState = {
   Online: "online",
+  Away: "away",
+  Busy: "busy",
   Offline: "offline",
 } as const;
-export type PresenceStatus =
-  (typeof PresenceStatus)[keyof typeof PresenceStatus];
+export type UserState = (typeof UserState)[keyof typeof UserState];
+
+// PresenceInfo is one row in the welcome.online snapshot: who's
+// connected plus their state + optional custom text.
+export interface PresenceInfo {
+  user: UserInfo;
+  state: UserState;
+  custom_text?: string;
+}
 
 export interface WelcomeMessage {
   type: "welcome";
   you: UserInfo;
-  online: UserInfo[];
+  online: PresenceInfo[];
 }
 
+// Broadcast to every connected client whenever a user's presence
+// changes (online edge, status change, offline edge). Drop the user
+// from the online map when state === "offline".
 export interface PresenceMessage {
   type: "presence";
   user: UserInfo;
-  status: PresenceStatus;
+  state: UserState;
+  custom_text?: string;
+}
+
+// Client→server: set my discrete state + custom message. The server
+// validates state ∈ {online, away, busy} ("offline" is reserved) and
+// broadcasts a PresenceMessage to all online clients.
+export interface StatusMessage {
+  type: "status";
+  state: UserState;
+  custom_text: string;
 }
 
 export interface WSErrorMessage {
@@ -119,7 +145,7 @@ export type ServerMessage =
   | ConversationAddedMessage
   | ConversationMembersChangedMessage;
 
-export type ClientMessage = PingMessage | IncomingMessage;
+export type ClientMessage = PingMessage | IncomingMessage | StatusMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 
