@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.4.0...v0.4.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **server:** allow cross-origin REST requests from Tauri client ([fecae1e](https://github.com/BiffstaGaming/OreoHouse/commit/fecae1edcfb73bf4d688ec657d896c35d12cc0eb))
+
 ## [0.4.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.3.0...v0.4.0) (2026-05-20)
 
 
