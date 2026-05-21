@@ -177,7 +177,7 @@ Server container exposes `:8080`. Volume `./data` mounted at `/data` inside the 
 - [x] **Phase 2** — WebSocket hub: authenticated `/ws?token=`, in-memory connection registry, online/offline presence broadcasts (away is deferred to Phase 7), `last_seen_at` on disconnect, client login + presence list.
 - [x] **Phase 3** — Messaging: conversations + messages tables, `POST /api/conversations/dm` find-or-create, REST history (`GET /api/conversations[/{id}/messages]`), `message` events over WS in both directions with replay-on-reconnect from a per-member delivery cursor, side-by-side client UI (presence + chat pane with composer).
 - [x] **Phase 4** — Groups and rooms: `topic` column on conversations, REST endpoints for create/invite/leave/list-rooms/join-room, `conversation_added` + `conversation_members_changed` WS events, client UI with + Group / + Room / Browse Rooms actions and a Leave button on non-DMs.
-- [ ] **Phase 5** — File and photo uploads: REST endpoints, inline previews for images
+- [x] **Phase 5** — File and photo uploads: `attachments` table + filesystem store with random storage paths, `POST /api/uploads` (Bearer) + `GET /api/files/{id}` (header or ?token=), WS `message` carries `attachment_ids[]` in + `attachments[]` out with server-side image dimension extraction (jpeg/png/gif/webp), client composer paperclip + chips + inline image previews and download chips for other files.
 - [ ] **Phase 6** — Real UI: contact list as primary view, popup chat windows, system tray, taskbar flash
 - [ ] **Phase 7** — Old-school feel: nudges (window shake), typing indicators, message sounds, custom status messages
 - [ ] **Phase 8** — Admin panel: simple web UI for user management

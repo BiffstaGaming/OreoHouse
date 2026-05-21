@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 4 — groups and rooms landed. Conversations now come in three flavours: DMs (auto, 2 people), groups (private, invite-only), and rooms (public, discoverable, anyone can join). REST endpoints handle creation + member management; WebSocket pushes `conversation_added` and `conversation_members_changed` events so every connected client updates live without polling. The client got + Group / + Room / Browse Rooms actions in the left pane, a member-aware chat header, and a Leave button for non-DM conversations. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 5 — file and photo uploads landed. New `attachments` table stores files under `<data_dir>/uploads/`; `POST /api/uploads` returns an attachment view (with image dimensions extracted server-side), and the client embeds attachment IDs in WS messages. Images render inline in the chat thread; other files appear as download chips. Default upload cap is 25 MiB, configurable via `OREOHOUSE_MAX_UPLOAD_MB`. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -48,6 +48,7 @@ Override via env vars or flags:
 | `OREOHOUSE_ADDR`              | `--addr`              | `:8080`  | HTTP listen address                              |
 | `OREOHOUSE_DATA_DIR`          | `--data-dir`          | `./data` | SQLite file + uploads dir                        |
 | `OREOHOUSE_SESSION_TTL_DAYS`  | `--session-ttl-days`  | `0`      | Session token lifetime in days; `0` = never expire |
+| `OREOHOUSE_MAX_UPLOAD_MB`     | `--max-upload-mb`     | `25`     | Per-upload size cap in MiB                       |
 
 Endpoints:
 
@@ -64,6 +65,8 @@ Endpoints:
 - `GET /api/conversations/{id}/messages?before=<id>&limit=<n>` → cursor-paginated history, newest first. Caller must be a member of the conversation; non-members get 404.
 - `GET /api/rooms` → list every room in the system with member counts, newest first.
 - `POST /api/rooms/{id}/join` → self-join a room. Idempotent.
+- `POST /api/uploads` → multipart/form-data with a single `file` part. Returns the new `AttachmentView`. Capped at `OREOHOUSE_MAX_UPLOAD_MB`. Bearer auth required.
+- `GET /api/files/{id}` → stream the bytes. Accepts either `Authorization: Bearer ...` or `?token=...` query (so `<img src>` works). Caller must be the uploader (covers orphan uploads) or a member of the conversation the attachment is linked to; otherwise 404.
 
 ## Authentication
 
@@ -119,6 +122,11 @@ Membership events:
 
 - `conversation_added` is pushed to a user the moment they're added to a new conversation (group create, group invite, room join). It carries the full conversation view so the client can drop it straight into its list.
 - `conversation_members_changed` is pushed to the *existing* members of a conversation when its membership changes; it carries the new full member list. The change-target (the joiner / new invitee) gets `conversation_added` instead, not a parallel members-changed event.
+
+Attachments:
+
+- Two-step send. Client first POSTs each file to `/api/uploads` (returns an `AttachmentView` with id + metadata + image dimensions when applicable). Then it sends a normal WS `message` with `attachment_ids: [N, …]`. Server validates that the sender owns each id and that none are already linked, then persists the message and links them atomically (from the user's perspective) before broadcasting the `message` event with the full `attachments[]` inlined.
+- Images render inline in the client; other files render as a download chip. The image source URL carries `?token=` because `<img src>` can't set an Authorization header.
 
 Full message catalog (welcome, presence, message, conversation_added, conversation_members_changed, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
 
@@ -249,4 +257,4 @@ cd server
 go test ./...
 ```
 
-Phase 4 brings the count to ~120 tests across `db`, `auth`, `admin`, `api`, `proto`, `ws`, `conversations`, and `messages`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
+Phase 5 brings the count to ~140 tests across `db`, `auth`, `admin`, `api`, `proto`, `ws`, `conversations`, `messages`, and `attachments`. New `internal/*` packages should follow the same pattern. WebSocket handler tests use `httptest.NewServer` plus `coder/websocket` dials for full-stack coverage.
