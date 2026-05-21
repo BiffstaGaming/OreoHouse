@@ -61,15 +61,64 @@ Browse to <http://localhost:8000/>. The PHP app calls
 browser hits the same `:8080` for everything else (CORS is already wide
 open on the Go side, and the WS handshake skips Origin checks).
 
-### Docker
+### Docker (local build)
 
-`docker compose up --build` brings up both services. The web client is
-on port 80, the Go server on port 8080.
+The repo's `docker-compose.yml` builds both images from source — good
+for development, but slow because it compiles the Go server every
+time. Use this when you're iterating on the code:
 
 ```bash
 docker compose up --build
 # → browse to http://<your-server>/
 ```
+
+### Docker (pulling from GHCR)
+
+For production / home-server deployment, pull the prebuilt images
+from GitHub Container Registry. **They are two separate images** —
+the server image has no PHP/Apache and pointing the web service at
+it will just start a second Go server with nothing on port 80.
+
+| Image | Tag | What it is |
+|---|---|---|
+| `ghcr.io/biffstagaming/oreohouse` | `latest` / `vX.Y.Z` | Go server (chat backend + WS + REST) |
+| `ghcr.io/biffstagaming/oreohouse-web` | `latest` / `vX.Y.Z` | PHP + Apache web client |
+
+Minimal production `compose.yaml`:
+
+```yaml
+services:
+  oreohouse:
+    image: ghcr.io/biffstagaming/oreohouse:latest
+    container_name: oreohouse
+    ports:
+      - "8080:8080"
+    volumes:
+      - /apps/oreohouse/data:/data
+    environment:
+      OREOHOUSE_ADDR: ":8080"
+      OREOHOUSE_DATA_DIR: "/data"
+      OREOHOUSE_SESSION_TTL_DAYS: "0"
+    restart: unless-stopped
+
+  oreohouse-web:
+    image: ghcr.io/biffstagaming/oreohouse-web:latest
+    container_name: oreohouse-web
+    ports:
+      - "8079:80"        # change to "80:80" if you don't run anything else on :80
+    environment:
+      # PHP-side URL — service name resolves over the Docker network.
+      OREO_SERVER_URL: "http://oreohouse:8080"
+      # Browser-side URL — leave empty to auto-derive
+      # (http://<request-host>:8080), or pin it to whatever your LAN
+      # hostname is, e.g. "http://vm-internal.home:8080".
+      OREO_BROWSER_SERVER_URL: ""
+    depends_on:
+      - oreohouse
+    restart: unless-stopped
+```
+
+After `docker compose up -d`, browse to `http://<your-server>:8079/`.
 
 ## Configuration
 
