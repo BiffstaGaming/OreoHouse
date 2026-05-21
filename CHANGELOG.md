@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.8.1...v0.9.0) (2026-05-21)
+
+
+### Features
+
+* **client:** branded Oreo House icon set + login wordmark ([1f8971e](https://github.com/BiffstaGaming/OreoHouse/commit/1f8971eec3400b00e7f350ddde1315032e732e27))
+
 ## [0.8.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.8.0...v0.8.1) (2026-05-21)
 
 
