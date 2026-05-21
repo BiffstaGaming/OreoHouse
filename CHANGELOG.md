@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.11.0...v0.12.0) (2026-05-21)
+
+
+### Features
+
+* avatars + display names, emoji in messages + reactions ([0ada71b](https://github.com/BiffstaGaming/OreoHouse/commit/0ada71bb2af905c963121a433c85eab067fae003))
+* avatars, display names, emoji picker + reactions ([d3995b9](https://github.com/BiffstaGaming/OreoHouse/commit/d3995b9417cd61f7b2970d908a2afda816c3040e))
+
 ## [0.11.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.10.0...v0.11.0) (2026-05-21)
 
 
