@@ -1,0 +1,27 @@
+# OreoHouse web client — Apache rewrite rules.
+#
+# Keep PHP routing simple: only .php files are entry points. Static
+# assets (css, js, png) serve directly. Anything else falls back to
+# index.php which handles the login redirect.
+
+RewriteEngine On
+
+# Don't rewrite real files or directories.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Cache static assets for an hour.
+<FilesMatch "\.(css|js|png|jpg|svg|woff2?)$">
+    Header set Cache-Control "public, max-age=3600"
+</FilesMatch>
+
+# Send a few safety headers. We intentionally do NOT set CSP — the
+# inline <script> in chat.php that injects window.OREO is essential
+# and adding nonces here would add complexity for very little gain on
+# a LAN-only deployment.
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "no-referrer"
+
+# No directory listings.
+Options -Indexes
