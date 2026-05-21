@@ -16,6 +16,7 @@
     const root = document.getElementById('app');
     const UI = window.OreoUI;
     const API = window.OreoAPI;
+    const H  = window.OreoHelpers;
 
     if (!window.OREO || !window.OREO.token) {
         window.location.href = '/index.php';
@@ -32,13 +33,32 @@
         messages: new Map(),               // convID -> [MessageView]
         reactions: new Map(),              // messageID -> [{emoji, user_ids}]
         reads: new Map(),                  // convID -> Map<userID, lastReadID>
+        pinned: new Map(),                 // convID -> Set<messageID>
         unread: new Map(),                 // convID -> count
         typers: new Map(),                 // convID -> Map<userID, expiresAt>
+        // Per-conv UI mute (no blip/flash/unread). Persisted in localStorage.
+        mutedConvs: H.loadMutedConvs(),
+        // Per-machine sound mute (suppresses every sound). Persisted.
+        soundsMuted: H.loadSoundsMuted(),
+        // Reply / edit composer state. Mutually exclusive.
+        replyTarget: null,                 // MessageView
+        editingMessage: null,              // MessageView
+        // Custom status (online/away/busy + free text). Sent over WS.
+        customStatus: { state: 'online', custom_text: '' },
+        // Per-machine arming gate for sign-in/out chimes — the welcome
+        // burst should not turn into a chorus. Armed 3s after boot.
+        presenceArmedAt: Date.now() + 3000,
+        // True until the user has loaded all of history (or hit EOF).
+        // Per-conv map so we don't repeatedly hit the server.
+        historyLoaded: new Map(),          // convID -> true when no more
+        historyLoading: new Set(),         // convID set while in flight
         currentConvID: null,
         ws: null,
     };
 
     state.users.set(state.me.id, state.me);
+    // Sounds helper consults this getter on every play* call.
+    H.setMutedGetter(function () { return state.soundsMuted; });
 
     function upsertUser(u) {
         if (!u || !u.id) return;
@@ -76,9 +96,16 @@
             UI.el('div', { class: 'topbar-spacer' }),
             UI.el('button', {
                 class: 'topbar-icon-btn',
+                id: 'topbar-sound',
+                title: state.soundsMuted ? 'Sounds muted (click to unmute)' : 'Sounds on (click to mute)',
+                onclick: toggleSoundsMuted,
+            }, state.soundsMuted ? '🔇' : '🔊'),
+            UI.el('button', {
+                class: 'topbar-icon-btn',
                 title: 'Search messages (Ctrl+K)',
                 onclick: openSearchModal,
             }, '🔍'),
+            statusChip(),
             UI.el('button', { class: 'topbar-self', onclick: openProfileModal }, [
                 wrapAvatar(state.me, 28),
                 UI.el('span', { class: 'self-label', text: UI.displayLabel(state.me) }),
@@ -116,6 +143,12 @@
             oninput: function (ev) { filterSidebar(ev.target.value); },
         });
         sb.appendChild(search);
+
+        sb.appendChild(UI.el('div', { class: 'sidebar-actions' }, [
+            UI.el('button', { class: 'sidebar-action', onclick: openNewGroupModal, title: 'Start a group chat' }, '+ Group'),
+            UI.el('button', { class: 'sidebar-action', onclick: openNewRoomModal, title: 'Create a persistent room' }, '+ Room'),
+            UI.el('button', { class: 'sidebar-action', onclick: openBrowseRoomsModal, title: 'Browse joinable rooms' }, 'Browse'),
+        ]));
 
         // Group conversations by type for tidy sections.
         const dms = [];
@@ -266,6 +299,10 @@
     async function openConversation(convID) {
         state.currentConvID = convID;
         state.unread.set(convID, 0);
+        // Drop any reply/edit composer state lingering from the previous
+        // conversation — UX would be confusing otherwise.
+        state.replyTarget = null;
+        state.editingMessage = null;
         renderSidebar();
         renderMain();
         // Load history (newest first) if we haven't already.
@@ -283,6 +320,15 @@
             } catch (e) {
                 console.error('history load failed', e);
             }
+            // Hydrate the pinned set so 📌 badges render on history.
+            // Best-effort; failure is non-fatal — pins still flow via WS.
+            try {
+                const pins = await API.listPins(convID);
+                let set = state.pinned.get(convID);
+                if (!set) { set = new Set(); state.pinned.set(convID, set); }
+                pins.forEach(function (p) { set.add(p.message.id); });
+                if (convID === state.currentConvID) renderMain();
+            } catch (e) { /* shrug */ }
         }
         markCurrentRead();
     }
@@ -303,21 +349,55 @@
             return;
         }
 
+        const isConvMuted = state.mutedConvs.has(convID);
         const header = UI.el('div', { class: 'chat-header' }, [
             UI.el('div', { class: 'chat-title' }, [
                 UI.el('span', { class: 'chat-name', text: convDisplayName(conv) }),
                 conv.topic ? UI.el('span', { class: 'chat-topic', text: conv.topic }) : null,
             ]),
             UI.el('div', { class: 'chat-meta', text: memberSummary(conv) }),
-            UI.el('button', {
-                class: 'composer-icon-btn',
-                title: 'Media & links in this conversation',
-                onclick: function () { openMediaPanel(convID); },
-                style: 'margin-left:0.5rem;',
-            }, '🖼️'),
+            UI.el('div', { class: 'chat-actions' }, [
+                UI.el('button', {
+                    class: 'composer-icon-btn',
+                    title: 'View pinned messages',
+                    onclick: function () { openPinsModal(convID); },
+                }, '📌'),
+                UI.el('button', {
+                    class: 'composer-icon-btn',
+                    title: 'Media & links in this conversation',
+                    onclick: function () { openMediaPanel(convID); },
+                }, '🖼️'),
+                UI.el('button', {
+                    class: 'composer-icon-btn',
+                    title: isConvMuted ? 'Unmute this conversation' : 'Mute this conversation',
+                    onclick: function () { toggleConvMute(convID); },
+                }, isConvMuted ? '🔕' : '🔔'),
+                conv.type !== 'dm'
+                    ? UI.el('button', {
+                        class: 'composer-icon-btn',
+                        title: 'Add members',
+                        onclick: function () { openAddMembersModal(convID); },
+                    }, '➕')
+                    : null,
+                conv.type !== 'dm'
+                    ? UI.el('button', {
+                        class: 'composer-icon-btn composer-icon-danger',
+                        title: 'Leave ' + convDisplayName(conv),
+                        onclick: function () {
+                            if (confirm('Leave ' + convDisplayName(conv) + '?')) leaveCurrentConversation(convID);
+                        },
+                    }, '🚪')
+                    : null,
+            ]),
         ]);
 
-        const log = UI.el('div', { class: 'message-log', id: 'message-log' });
+        const log = UI.el('div', {
+            class: 'message-log',
+            id: 'message-log',
+            onscroll: function () {
+                if (log.scrollTop < 80) loadOlderMessages(convID);
+            },
+        });
         renderMessages(log, convID);
 
         const typingBar = UI.el('div', { class: 'typing-bar', id: 'typing-bar' });
@@ -359,6 +439,9 @@
         const mine = sender.id === state.me.id;
         const groupWithPrev = prev && prev.sender.id === sender.id &&
             (new Date(m.created_at) - new Date(prev.created_at)) < 5 * 60 * 1000;
+        const isPinned = (state.pinned.get(m.conversation_id) || new Set()).has(m.id);
+        const isDeleted = !!m.deleted_at;
+        const isEdited  = !!m.edited_at && !isDeleted;
 
         const row = UI.el('div', {
             class: 'msg' + (mine ? ' msg-mine' : '') + (groupWithPrev ? ' msg-grouped' : ''),
@@ -372,18 +455,45 @@
         }
 
         const bubble = UI.el('div', { class: 'msg-bubble' });
+
+        // Teams-style reply quote, above everything else in the bubble.
+        if (m.reply_to) {
+            const quoteSender = state.users.get(m.reply_to.sender.id) || m.reply_to.sender;
+            bubble.appendChild(UI.el('div', {
+                class: 'msg-quote',
+                title: m.reply_to.deleted ? 'Deleted message' : m.reply_to.body,
+            }, [
+                UI.el('div', { class: 'msg-quote-sender' }, [
+                    UI.el('span', { class: 'msg-quote-arrow', text: '↪ ' }),
+                    UI.el('span', { text: UI.displayLabel(quoteSender) }),
+                ]),
+                UI.el('div', { class: 'msg-quote-body' },
+                    m.reply_to.deleted
+                        ? UI.el('span', { class: 'msg-quote-deleted', text: '(deleted message)' })
+                        : UI.el('span', { text: m.reply_to.body || '' }),
+                ),
+            ]));
+        }
+
         if (!groupWithPrev) {
             bubble.appendChild(UI.el('div', { class: 'msg-meta' }, [
                 UI.el('span', { class: 'msg-author', text: UI.displayLabel(sender) }),
+                isPinned ? UI.el('span', { class: 'msg-pinned-badge', title: 'Pinned' }, '📌') : null,
                 UI.el('span', { class: 'msg-time', text: UI.formatTime(m.created_at) }),
             ]));
         }
 
-        if (m.body && m.body.length > 0) {
-            bubble.appendChild(UI.el('div', { class: 'msg-body', html: UI.linkify(m.body) }));
+        if (isDeleted) {
+            bubble.appendChild(UI.el('div', { class: 'msg-body msg-deleted', text: 'this message was deleted' }));
+        } else if (m.body && m.body.length > 0) {
+            const body = UI.el('div', { class: 'msg-body', html: UI.linkify(m.body) });
+            if (isEdited) {
+                body.appendChild(UI.el('span', { class: 'msg-edited', text: ' (edited)' }));
+            }
+            bubble.appendChild(body);
         }
 
-        if (m.attachments && m.attachments.length > 0) {
+        if (!isDeleted && m.attachments && m.attachments.length > 0) {
             const wrap = UI.el('div', { class: 'msg-attachments' });
             m.attachments.forEach(function (a) {
                 if (UI.isImageMime(a.mime_type)) {
@@ -431,14 +541,47 @@
             bubble.appendChild(pillsWrap);
         }
 
-        // Hover toolbar for adding reactions.
-        bubble.appendChild(buildReactionToolbar(m));
+        // Tick marks for own undeleted messages.
+        if (mine && !isDeleted) {
+            bubble.appendChild(renderTicks(m));
+        }
+
+        // Hover toolbar (reactions + actions).
+        if (!isDeleted) {
+            bubble.appendChild(buildMessageToolbar(m, mine));
+        }
 
         row.appendChild(bubble);
         return row;
     }
 
-    function buildReactionToolbar(m) {
+    function renderTicks(m) {
+        // Count members other than me who have read up to >= m.id.
+        const conv = state.conversations.get(m.conversation_id);
+        if (!conv) return UI.el('span');
+        const otherIDs = conv.members
+            .map(function (u) { return u.id; })
+            .filter(function (id) { return id !== state.me.id; });
+        const readsMap = state.reads.get(m.conversation_id) || new Map();
+        let readers = 0;
+        otherIDs.forEach(function (uid) {
+            if ((readsMap.get(uid) || 0) >= m.id) readers++;
+        });
+        let icon, cls, title;
+        if (readers === 0) {
+            icon = '✓'; cls = 'msg-ticks-sent';
+            title = 'Sent';
+        } else if (readers < otherIDs.length) {
+            icon = '✓✓'; cls = 'msg-ticks-partial';
+            title = 'Read by ' + readers + '/' + otherIDs.length;
+        } else {
+            icon = '✓✓'; cls = 'msg-ticks-read';
+            title = otherIDs.length === 1 ? 'Read' : 'Read by everyone';
+        }
+        return UI.el('div', { class: 'msg-ticks ' + cls, title: title }, icon);
+    }
+
+    function buildMessageToolbar(m, mine) {
         const QUICK = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
         const bar = UI.el('div', { class: 'msg-toolbar' });
         QUICK.forEach(function (e) {
@@ -450,9 +593,43 @@
         });
         bar.appendChild(UI.el('button', {
             class: 'tool-btn',
-            title: 'More…',
-            onclick: function () { openEmojiPicker(function (emoji) { state.ws.sendReact(m.id, emoji); }); },
+            title: 'More reactions…',
+            onclick: function (ev) {
+                openEmojiPicker(function (emoji) { state.ws.sendReact(m.id, emoji); }, ev.currentTarget);
+            },
         }, '⊕'));
+        bar.appendChild(UI.el('button', {
+            class: 'tool-btn',
+            title: 'Reply',
+            onclick: function () { startReply(m); },
+        }, '↩'));
+        // Pin/Unpin available to every member.
+        const isPinned = (state.pinned.get(m.conversation_id) || new Set()).has(m.id);
+        bar.appendChild(UI.el('button', {
+            class: 'tool-btn',
+            title: isPinned ? 'Unpin' : 'Pin',
+            onclick: function () {
+                if (isPinned) state.ws.sendUnpin(m.id);
+                else state.ws.sendPin(m.id);
+            },
+        }, isPinned ? '📍' : '📌'));
+        // Edit / Delete are own-message only. Edit is server-gated to a
+        // 15-minute window; the button is always shown — the server
+        // will refuse and the UI logs the error.
+        if (mine) {
+            bar.appendChild(UI.el('button', {
+                class: 'tool-btn',
+                title: 'Edit',
+                onclick: function () { startEdit(m); },
+            }, '✏️'));
+            bar.appendChild(UI.el('button', {
+                class: 'tool-btn tool-btn-danger',
+                title: 'Delete',
+                onclick: function () {
+                    if (confirm('Delete this message?')) state.ws.sendDelete(m.id);
+                },
+            }, '🗑'));
+        }
         return bar;
     }
 
@@ -468,15 +645,21 @@
     function renderComposer(conv) {
         const pending = []; // pending attachment uploads, attached on send
 
+        const contextBar = UI.el('div', { class: 'composer-context-bar', id: 'composer-context-bar' });
         const pendingBar = UI.el('div', { class: 'composer-pending', id: 'composer-pending' });
         const textArea = UI.el('textarea', {
             class: 'composer-input',
             rows: '2',
-            placeholder: 'Write a message…',
+            placeholder: 'Write a message — Enter to send, Shift+Enter for newline',
             oninput: function () {
-                state.ws.sendTyping(conv.id);
+                if (!state.editingMessage) state.ws.sendTyping(conv.id);
             },
             onkeydown: function (ev) {
+                if (ev.key === 'Escape' && (state.replyTarget || state.editingMessage)) {
+                    cancelComposerContext();
+                    ev.preventDefault();
+                    return;
+                }
                 if (ev.key === 'Enter' && !ev.shiftKey) {
                     ev.preventDefault();
                     submit();
@@ -486,6 +669,65 @@
                 handlePaste(ev, pending, pendingBar);
             },
         });
+
+        function repaintContext() {
+            contextBar.innerHTML = '';
+            if (state.editingMessage) {
+                contextBar.appendChild(UI.el('div', { class: 'composer-context composer-context-edit' }, [
+                    UI.el('span', { class: 'composer-context-label', text: '✏️ Editing' }),
+                    UI.el('span', { class: 'composer-context-body', text: state.editingMessage.body || '' }),
+                    UI.el('button', {
+                        class: 'composer-context-cancel',
+                        title: 'Cancel (Esc)',
+                        onclick: cancelComposerContext,
+                    }, '×'),
+                ]));
+            } else if (state.replyTarget) {
+                const rt = state.replyTarget;
+                const sender = state.users.get(rt.sender.id) || rt.sender;
+                contextBar.appendChild(UI.el('div', { class: 'composer-context composer-context-reply' }, [
+                    UI.el('span', { class: 'composer-context-label' }, [
+                        UI.el('span', { text: '↩ Replying to ' }),
+                        UI.el('strong', { text: UI.displayLabel(sender) }),
+                    ]),
+                    UI.el('span', { class: 'composer-context-body', text: rt.body || (rt.attachments ? '(attachment)' : '') }),
+                    UI.el('button', {
+                        class: 'composer-context-cancel',
+                        title: 'Cancel reply (Esc)',
+                        onclick: cancelComposerContext,
+                    }, '×'),
+                ]));
+            }
+        }
+
+        function cancelComposerContext() {
+            state.editingMessage = null;
+            state.replyTarget = null;
+            textArea.value = '';
+            repaintContext();
+            repaintSendLabel();
+        }
+
+        // Exposed via closure so startReply / startEdit at the module
+        // level can ask the active composer to repaint and focus.
+        currentComposer = {
+            focus: function (newBody) {
+                if (typeof newBody === 'string') textArea.value = newBody;
+                textArea.focus();
+                // Move caret to end.
+                const v = textArea.value;
+                textArea.value = '';
+                textArea.value = v;
+                repaintContext();
+                repaintSendLabel();
+            },
+        };
+
+        function repaintSendLabel() {
+            const btn = sendButton;
+            if (!btn) return;
+            btn.textContent = state.editingMessage ? 'Save' : 'Send';
+        }
 
         function repaintPending() {
             pendingBar.innerHTML = '';
@@ -503,13 +745,32 @@
         }
 
         async function submit() {
-            const body = textArea.value.trim();
+            // Expand slash commands before send. /dice /coin etc.
+            let body = H.expandSlashCommand(textArea.value.trim());
+
+            // Editing: send WS edit, NOT a new message.
+            if (state.editingMessage) {
+                if (body.length === 0) {
+                    alert('An edited message cannot be empty. Delete it instead.');
+                    return;
+                }
+                state.ws.sendEdit(state.editingMessage.id, body);
+                state.editingMessage = null;
+                textArea.value = '';
+                repaintContext();
+                repaintSendLabel();
+                return;
+            }
+
             if (body.length === 0 && pending.length === 0) return;
             const ids = pending.map(function (a) { return a.id; });
-            state.ws.sendMessage(conv.id, body, ids, 0);
+            const replyToID = state.replyTarget ? state.replyTarget.id : 0;
+            state.ws.sendMessage(conv.id, body, ids, replyToID);
             textArea.value = '';
             pending.length = 0;
+            state.replyTarget = null;
             repaintPending();
+            repaintContext();
         }
 
         async function handleFiles(files) {
@@ -532,6 +793,12 @@
                 handleFiles(ev.target.files || []);
                 ev.target.value = '';
             },
+        });
+
+        const sendButton = UI.el('button', {
+            class: 'composer-send',
+            onclick: submit,
+            text: 'Send',
         });
 
         const buttons = UI.el('div', { class: 'composer-buttons' }, [
@@ -565,12 +832,11 @@
                 },
             }, '👋'),
             UI.el('div', { class: 'composer-spacer' }),
-            UI.el('button', {
-                class: 'composer-send',
-                onclick: submit,
-                text: 'Send',
-            }),
+            sendButton,
         ]);
+
+        // Initial paint of context (no-op if neither editing nor replying).
+        repaintContext();
 
         const wrap = UI.el('div', { class: 'composer', ondragover: function (ev) {
             ev.preventDefault();
@@ -581,9 +847,24 @@
             wrap.classList.remove('dragover');
             const files = ev.dataTransfer && ev.dataTransfer.files;
             if (files && files.length) handleFiles(files);
-        }}, [pendingBar, textArea, buttons, fileInput]);
+        }}, [contextBar, pendingBar, textArea, buttons, fileInput]);
 
         return wrap;
+    }
+
+    // Module-level handle to the currently-rendered composer so that
+    // startReply / startEdit can poke the input.
+    let currentComposer = null;
+
+    function startReply(m) {
+        state.editingMessage = null;
+        state.replyTarget = m;
+        if (currentComposer) currentComposer.focus('');
+    }
+    function startEdit(m) {
+        state.replyTarget = null;
+        state.editingMessage = m;
+        if (currentComposer) currentComposer.focus(m.body || '');
     }
 
     function handlePaste(ev, pending, pendingBar) {
@@ -655,7 +936,7 @@
     // ---- emoji picker ----------------------------------------------
 
     function openEmojiPicker(onPick, anchor) {
-        const categories = [
+        const baseCategories = [
             { name: 'Smileys', emojis: ['😀','😁','😂','🤣','😅','😊','😇','🙂','🙃','😉','😍','😘','🤔','🤨','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','🥱','😴','😌','😛','😜','😝','🤤'] },
             { name: 'Hands', emojis: ['👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👋','🙌','👏','🙏','💪','🤝','✊','👊'] },
             { name: 'Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💖','💗','💘','💝'] },
@@ -663,6 +944,11 @@
             { name: 'Animals', emojis: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔'] },
             { name: 'Nature', emojis: ['🌳','🌲','🌴','🌵','🌷','🌸','🌹','🌻','🌼','☀️','⛅','🌧️','⛈️','🌈','⭐','🌙'] },
         ];
+        // Prepend a Recent tab when there's history.
+        const recent = H.loadRecentEmoji();
+        const categories = recent.length > 0
+            ? [{ name: '🕒 Recent', emojis: recent }].concat(baseCategories)
+            : baseCategories;
 
         document.querySelectorAll('.emoji-picker').forEach(function (n) { n.remove(); });
 
@@ -679,6 +965,7 @@
                 grid.appendChild(UI.el('button', {
                     class: 'emoji-cell',
                     onclick: function () {
+                        H.pushRecentEmoji(e);
                         onPick(e);
                         picker.remove();
                     },
@@ -1183,11 +1470,20 @@
         });
 
         ws.on('presence', function (msg) {
+            const wasOnline = state.online.has(msg.user.id);
             upsertUser(msg.user);
             if (msg.state === 'offline') {
                 state.online.delete(msg.user.id);
             } else {
                 state.online.set(msg.user.id, { state: msg.state, custom_text: msg.custom_text || '' });
+            }
+            // Sign-in / sign-out chime, but only AFTER the initial
+            // burst on connect (3s gate) and never for self.
+            const armed = Date.now() >= state.presenceArmedAt;
+            if (armed && msg.user.id !== state.me.id) {
+                const isOnline = msg.state !== 'offline';
+                if (!wasOnline && isOnline) H.playSignIn();
+                else if (wasOnline && !isOnline) H.playSignOut();
             }
             renderSidebar();
             if (state.currentConvID) {
@@ -1207,6 +1503,8 @@
             if (bucket.some(function (x) { return x.id === m.id; })) return;
             bucket.push(m);
 
+            const convMuted = state.mutedConvs.has(m.conversation_id);
+
             if (m.conversation_id === state.currentConvID && document.visibilityState === 'visible') {
                 const log = document.getElementById('message-log');
                 if (log) {
@@ -1216,11 +1514,48 @@
                 }
                 markCurrentRead();
             } else if (m.sender.id !== state.me.id) {
-                state.unread.set(m.conversation_id, (state.unread.get(m.conversation_id) || 0) + 1);
-                playBlip();
-                updateTitleBadge();
+                if (!convMuted) {
+                    state.unread.set(m.conversation_id, (state.unread.get(m.conversation_id) || 0) + 1);
+                    H.playMessageBlip();
+                    updateTitleBadge();
+                }
                 renderSidebar();
             }
+        });
+
+        ws.on('message_edited', function (msg) {
+            const bucket = state.messages.get(msg.conversation_id);
+            if (!bucket) return;
+            const m = bucket.find(function (x) { return x.id === msg.message_id; });
+            if (!m) return;
+            m.body = msg.body;
+            m.edited_at = msg.edited_at;
+            repaintMessage(msg.conversation_id, msg.message_id);
+        });
+
+        ws.on('message_deleted', function (msg) {
+            const bucket = state.messages.get(msg.conversation_id);
+            if (!bucket) return;
+            const m = bucket.find(function (x) { return x.id === msg.message_id; });
+            if (!m) return;
+            m.deleted_at = msg.deleted_at;
+            m.body = '';
+            m.attachments = [];
+            state.reactions.delete(msg.message_id);
+            repaintMessage(msg.conversation_id, msg.message_id);
+        });
+
+        ws.on('message_pinned', function (msg) {
+            let set = state.pinned.get(msg.conversation_id);
+            if (!set) { set = new Set(); state.pinned.set(msg.conversation_id, set); }
+            set.add(msg.message_id);
+            repaintMessage(msg.conversation_id, msg.message_id);
+        });
+
+        ws.on('message_unpinned', function (msg) {
+            const set = state.pinned.get(msg.conversation_id);
+            if (set) set.delete(msg.message_id);
+            repaintMessage(msg.conversation_id, msg.message_id);
         });
 
         ws.on('conversation_added', function (msg) {
@@ -1250,21 +1585,32 @@
         });
 
         ws.on('nudge', function (msg) {
+            const convMuted = state.mutedConvs.has(msg.conversation_id);
             if (msg.conversation_id !== state.currentConvID) {
-                state.unread.set(msg.conversation_id, (state.unread.get(msg.conversation_id) || 0) + 1);
-                renderSidebar();
+                if (!convMuted) {
+                    state.unread.set(msg.conversation_id, (state.unread.get(msg.conversation_id) || 0) + 1);
+                    renderSidebar();
+                }
             } else {
                 flashChat();
             }
-            playNudge();
+            if (!convMuted) H.playNudge();
         });
 
         ws.on('read_receipt', function (msg) {
             let m = state.reads.get(msg.conversation_id);
             if (!m) { m = new Map(); state.reads.set(msg.conversation_id, m); }
             m.set(msg.user.id, msg.last_read_message_id);
-            // We don't render explicit tick marks in the web client yet
-            // (the data is in state.reads for future use).
+            // Repaint my own messages up to the new high-water mark in
+            // the active conv so tick marks update live.
+            if (msg.conversation_id === state.currentConvID) {
+                const bucket = state.messages.get(msg.conversation_id) || [];
+                bucket.forEach(function (x) {
+                    if (x.sender.id === state.me.id && x.id <= msg.last_read_message_id) {
+                        repaintMessage(msg.conversation_id, x.id);
+                    }
+                });
+            }
         });
 
         ws.on('user_profile_changed', function (msg) {
@@ -1287,15 +1633,39 @@
                 }
             }
             state.reactions.set(msg.message_id, groups);
-            // Repaint just this message.
-            const row = document.querySelector('[data-message-id="' + msg.message_id + '"]');
-            if (row && msg.conversation_id === state.currentConvID) {
+
+            // Soft pop sound when SOMEONE ELSE reacts (action=add) to
+            // one of MY messages and the conv isn't muted/focused.
+            if (msg.action === 'add' && msg.user.id !== state.me.id) {
                 const bucket = state.messages.get(msg.conversation_id) || [];
-                const m = bucket.find(function (x) { return x.id === msg.message_id; });
-                const prev = bucket.indexOf(m) > 0 ? bucket[bucket.indexOf(m) - 1] : null;
-                if (m) row.replaceWith(messageRow(m, prev));
+                const target = bucket.find(function (x) { return x.id === msg.message_id; });
+                const convMuted = state.mutedConvs.has(msg.conversation_id);
+                if (target && target.sender.id === state.me.id && !convMuted) {
+                    if (msg.conversation_id !== state.currentConvID || document.visibilityState !== 'visible') {
+                        H.playReactionPop();
+                        state.unread.set(msg.conversation_id, (state.unread.get(msg.conversation_id) || 0) + 1);
+                        updateTitleBadge();
+                        renderSidebar();
+                    }
+                }
             }
+
+            repaintMessage(msg.conversation_id, msg.message_id);
         });
+
+        // Shared per-message repaint. Used by reaction, edit, delete,
+        // pin/unpin, and read-receipt handlers.
+        function repaintMessage(convID, messageID) {
+            if (convID !== state.currentConvID) return;
+            const row = document.querySelector('[data-message-id="' + messageID + '"]');
+            if (!row) return;
+            const bucket = state.messages.get(convID) || [];
+            const m = bucket.find(function (x) { return x.id === messageID; });
+            if (!m) return;
+            const idx = bucket.indexOf(m);
+            const prev = idx > 0 ? bucket[idx - 1] : null;
+            row.replaceWith(messageRow(m, prev));
+        }
 
         ws.on('error', function (msg) {
             console.warn('server error', msg);
@@ -1304,43 +1674,103 @@
         ws.connect();
     }
 
-    // ---- audio -----------------------------------------------------
+    // ---- toggles & menus ------------------------------------------
 
-    let audioCtx = null;
-    function ensureAudio() {
-        if (audioCtx) return audioCtx;
-        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-        catch (_) { audioCtx = null; }
-        return audioCtx;
+    function toggleSoundsMuted() {
+        state.soundsMuted = !state.soundsMuted;
+        H.saveSoundsMuted(state.soundsMuted);
+        const btn = document.getElementById('topbar-sound');
+        if (btn) {
+            btn.textContent = state.soundsMuted ? '🔇' : '🔊';
+            btn.title = state.soundsMuted
+                ? 'Sounds muted (click to unmute)'
+                : 'Sounds on (click to mute)';
+        }
     }
-    function playBlip() {
-        const ctx = ensureAudio();
-        if (!ctx) return;
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.frequency.value = 880;
-        o.type = 'sine';
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
-        o.connect(g).connect(ctx.destination);
-        o.start();
-        o.stop(ctx.currentTime + 0.2);
+
+    function toggleConvMute(convID) {
+        if (state.mutedConvs.has(convID)) state.mutedConvs.delete(convID);
+        else state.mutedConvs.add(convID);
+        H.saveMutedConvs(state.mutedConvs);
+        if (convID === state.currentConvID) renderMain();
+        renderSidebar();
     }
-    function playNudge() {
-        const ctx = ensureAudio();
-        if (!ctx) return;
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.frequency.setValueAtTime(160, ctx.currentTime);
-        o.frequency.linearRampToValueAtTime(110, ctx.currentTime + 0.3);
-        o.type = 'sawtooth';
-        g.gain.setValueAtTime(0.0001, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-        o.connect(g).connect(ctx.destination);
-        o.start();
-        o.stop(ctx.currentTime + 0.4);
+
+    function statusChip() {
+        const cs = state.customStatus;
+        return UI.el('button', {
+            class: 'topbar-status status-' + cs.state,
+            title: 'Click to change status',
+            onclick: function (ev) { openStatusMenu(ev.currentTarget); },
+        }, [
+            UI.el('span', { class: 'status-dot status-dot-' + cs.state }),
+            UI.el('span', { class: 'status-label', text: cs.state }),
+            cs.custom_text
+                ? UI.el('span', { class: 'status-custom', text: ' — ' + cs.custom_text })
+                : null,
+        ]);
+    }
+
+    function openStatusMenu(anchor) {
+        document.querySelectorAll('.status-popover').forEach(function (n) { n.remove(); });
+        const popover = UI.el('div', { class: 'status-popover' });
+        const STATES = [
+            { name: 'online', label: 'Online' },
+            { name: 'away',   label: 'Away'   },
+            { name: 'busy',   label: 'Busy'   },
+        ];
+        STATES.forEach(function (s) {
+            popover.appendChild(UI.el('button', {
+                class: 'status-option' + (state.customStatus.state === s.name ? ' status-option-active' : ''),
+                onclick: function () {
+                    state.customStatus.state = s.name;
+                    state.ws.sendStatus(state.customStatus.state, state.customStatus.custom_text);
+                    refreshStatusChip();
+                    popover.remove();
+                },
+            }, [
+                UI.el('span', { class: 'status-dot status-dot-' + s.name }),
+                UI.el('span', { text: s.label }),
+            ]));
+        });
+        const customInput = UI.el('input', {
+            type: 'text',
+            class: 'status-custom-input',
+            placeholder: 'Custom message…',
+            value: state.customStatus.custom_text,
+            maxlength: '256',
+        });
+        const save = UI.el('button', {
+            class: 'status-custom-save',
+            onclick: function () {
+                state.customStatus.custom_text = customInput.value.trim();
+                state.ws.sendStatus(state.customStatus.state, state.customStatus.custom_text);
+                refreshStatusChip();
+                popover.remove();
+            },
+            text: 'Save',
+        });
+        popover.appendChild(UI.el('div', { class: 'status-custom-row' }, [customInput, save]));
+
+        document.body.appendChild(popover);
+        const r = anchor.getBoundingClientRect();
+        popover.style.left = Math.max(8, r.left) + 'px';
+        popover.style.top = (r.bottom + 4) + 'px';
+        setTimeout(function () {
+            document.addEventListener('click', function close(ev) {
+                if (!popover.contains(ev.target) && ev.target !== anchor) {
+                    popover.remove();
+                    document.removeEventListener('click', close, true);
+                }
+            }, true);
+        }, 0);
+    }
+
+    function refreshStatusChip() {
+        // Just rebuild the topbar so the chip swaps in cleanly.
+        renderShell();
+        renderSidebar();
+        if (state.currentConvID) renderMain();
     }
 
     // ---- title bar unread badge ------------------------------------
@@ -1352,6 +1782,291 @@
     }
 
     setInterval(updateTitleBadge, 1000);
+
+    // ---- conversation creation + management modals -----------------
+
+    function openNewGroupModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const nameInput = UI.el('input', { type: 'text', placeholder: 'Group name (optional)' });
+        const memberPicker = renderMemberPicker(new Set([state.me.id]));
+        async function create() {
+            const ids = memberPicker.selectedIDs().filter(function (id) { return id !== state.me.id; });
+            if (ids.length === 0) { alert('Pick at least one other member.'); return; }
+            try {
+                const conv = await API.createGroup(nameInput.value.trim(), ids);
+                state.conversations.set(conv.id, conv);
+                (conv.members || []).forEach(upsertUser);
+                renderSidebar();
+                openConversation(conv.id);
+                backdrop.remove();
+            } catch (e) { alert('Create failed: ' + e.message); }
+        }
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'New group chat' }),
+            UI.el('label', {}, [UI.el('span', { text: 'Name' }), nameInput]),
+            UI.el('label', {}, [UI.el('span', { text: 'Members' }), memberPicker.el]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { class: 'primary', onclick: create, text: 'Create' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    function openNewRoomModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const nameInput = UI.el('input', { type: 'text', placeholder: 'Room name (required)', required: true });
+        const topicInput = UI.el('input', { type: 'text', placeholder: 'Topic (optional)' });
+        async function create() {
+            const name = nameInput.value.trim();
+            if (!name) { alert('Room name is required.'); return; }
+            try {
+                const conv = await API.createRoom(name, topicInput.value.trim());
+                state.conversations.set(conv.id, conv);
+                (conv.members || []).forEach(upsertUser);
+                renderSidebar();
+                openConversation(conv.id);
+                backdrop.remove();
+            } catch (e) { alert('Create failed: ' + e.message); }
+        }
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'New room' }),
+            UI.el('label', {}, [UI.el('span', { text: 'Name' }), nameInput]),
+            UI.el('label', {}, [UI.el('span', { text: 'Topic' }), topicInput]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { class: 'primary', onclick: create, text: 'Create' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    async function openBrowseRoomsModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const list = UI.el('ul', { class: 'rooms-list' });
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Browse rooms' }),
+            UI.el('p', { class: 'placeholder', text: 'Loading…' }),
+            list,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+        try {
+            const rooms = await API.listRooms();
+            list.innerHTML = '';
+            const placeholder = card.querySelector('.placeholder');
+            if (placeholder) placeholder.remove();
+            if (rooms.length === 0) {
+                card.insertBefore(UI.el('p', { class: 'placeholder', text: 'No rooms yet — create one with + Room.' }), list);
+                return;
+            }
+            rooms.forEach(function (r) {
+                const already = state.conversations.has(r.id);
+                list.appendChild(UI.el('li', {}, [
+                    UI.el('div', { class: 'room-row' }, [
+                        UI.el('div', { class: 'room-meta' }, [
+                            UI.el('div', { class: 'room-name', text: r.name }),
+                            r.topic ? UI.el('div', { class: 'room-topic', text: r.topic }) : null,
+                            UI.el('div', { class: 'room-sub', text: r.member_count + ' member' + (r.member_count === 1 ? '' : 's') }),
+                        ]),
+                        UI.el('button', {
+                            class: 'primary',
+                            disabled: already,
+                            onclick: async function () {
+                                try {
+                                    const conv = await API.joinRoom(r.id);
+                                    state.conversations.set(conv.id, conv);
+                                    (conv.members || []).forEach(upsertUser);
+                                    renderSidebar();
+                                    openConversation(conv.id);
+                                    backdrop.remove();
+                                } catch (e) { alert('Join failed: ' + e.message); }
+                            },
+                            text: already ? 'Joined' : 'Join',
+                        }),
+                    ]),
+                ]));
+            });
+        } catch (e) {
+            list.innerHTML = '';
+            card.appendChild(UI.el('p', { class: 'placeholder', text: 'Failed to load rooms: ' + e.message }));
+        }
+    }
+
+    function openAddMembersModal(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        const already = new Set(conv.members.map(function (m) { return m.id; }));
+        const picker = renderMemberPicker(already, /*hideAlreadyIn=*/true);
+        async function add() {
+            const ids = picker.selectedIDs().filter(function (id) { return !already.has(id); });
+            if (ids.length === 0) { alert('Pick at least one user.'); return; }
+            try {
+                await API.addMembers(convID, ids);
+                backdrop.remove();
+            } catch (e) { alert('Add failed: ' + e.message); }
+        }
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Add members' }),
+            picker.el,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { class: 'primary', onclick: add, text: 'Add' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    async function openPinsModal(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const body = UI.el('div', { class: 'pin-list' });
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Pinned messages' }),
+            body,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+        body.appendChild(UI.el('p', { class: 'placeholder', text: 'Loading…' }));
+        try {
+            const pins = await API.listPins(convID);
+            body.innerHTML = '';
+            if (pins.length === 0) {
+                body.appendChild(UI.el('p', { class: 'placeholder', text: 'No pinned messages in this conversation yet.' }));
+                return;
+            }
+            // Sync our in-memory pinned set with what the server says.
+            let set = state.pinned.get(convID);
+            if (!set) { set = new Set(); state.pinned.set(convID, set); }
+            pins.forEach(function (p) { set.add(p.message.id); });
+
+            pins.forEach(function (p) {
+                const sender = state.users.get(p.message.sender.id) || p.message.sender;
+                const pinner = state.users.get(p.pinned_by.id) || p.pinned_by;
+                body.appendChild(UI.el('div', { class: 'pin-row' }, [
+                    UI.el('div', { class: 'pin-meta' }, [
+                        UI.el('span', { class: 'pin-sender', text: UI.displayLabel(sender) }),
+                        UI.el('span', { class: 'pin-time', text: UI.formatTime(p.message.created_at) }),
+                    ]),
+                    UI.el('div', { class: 'pin-body', text: p.message.body || '(attachment only)' }),
+                    UI.el('div', { class: 'pin-footer', text: '📌 by ' + UI.displayLabel(pinner) + ' • ' + UI.formatTime(p.pinned_at) }),
+                ]));
+            });
+        } catch (e) {
+            body.innerHTML = '';
+            body.appendChild(UI.el('p', { class: 'placeholder', text: 'Failed to load pins: ' + e.message }));
+        }
+    }
+
+    async function leaveCurrentConversation(convID) {
+        try {
+            await API.leaveConversation(convID);
+            state.conversations.delete(convID);
+            state.messages.delete(convID);
+            if (state.currentConvID === convID) state.currentConvID = null;
+            renderSidebar();
+            renderMain();
+        } catch (e) { alert('Leave failed: ' + e.message); }
+    }
+
+    function makeBackdrop(card) {
+        const backdrop = UI.el('div', {
+            class: 'modal-backdrop',
+            onclick: function (ev) { if (ev.target === backdrop) backdrop.remove(); },
+        }, [card]);
+        document.body.appendChild(backdrop);
+        function esc(ev) { if (ev.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', esc); } }
+        document.addEventListener('keydown', esc);
+        return backdrop;
+    }
+
+    // Multi-user picker that returns { el, selectedIDs() }. Used by
+    // both the new-group and add-members modals.
+    function renderMemberPicker(preselected, hideAlreadyIn) {
+        const selected = new Set(preselected || []);
+        const wrap = UI.el('div', { class: 'member-picker' });
+        function repaint() {
+            wrap.innerHTML = '';
+            const all = Array.from(state.users.values())
+                .filter(function (u) { return u.id !== state.me.id; })
+                .filter(function (u) { return !hideAlreadyIn || !preselected.has(u.id); })
+                .sort(function (a, b) { return UI.displayLabel(a).localeCompare(UI.displayLabel(b)); });
+            if (all.length === 0) {
+                wrap.appendChild(UI.el('p', { class: 'placeholder', text: 'No other users known yet.' }));
+                return;
+            }
+            all.forEach(function (u) {
+                const checked = selected.has(u.id);
+                wrap.appendChild(UI.el('label', { class: 'member-picker-row' + (checked ? ' member-picker-row-checked' : '') }, [
+                    UI.el('input', {
+                        type: 'checkbox',
+                        checked: checked,
+                        onchange: function (ev) {
+                            if (ev.target.checked) selected.add(u.id);
+                            else selected.delete(u.id);
+                            repaint();
+                        },
+                    }),
+                    UI.el('span', { class: 'member-picker-name', text: UI.displayLabel(u) }),
+                ]));
+            });
+        }
+        repaint();
+        return {
+            el: wrap,
+            selectedIDs: function () { return Array.from(selected); },
+        };
+    }
+
+    // ---- scroll-to-load-older history ------------------------------
+
+    async function loadOlderMessages(convID) {
+        if (state.historyLoading.has(convID)) return;
+        if (state.historyLoaded.get(convID)) return;
+        const bucket = state.messages.get(convID) || [];
+        if (bucket.length === 0) return;
+        const oldestID = bucket[0].id;
+        state.historyLoading.add(convID);
+        try {
+            const resp = await API.listMessages(convID, oldestID, 50);
+            const ordered = (resp.messages || []).slice().reverse();
+            if (ordered.length === 0) {
+                state.historyLoaded.set(convID, true);
+                return;
+            }
+            ordered.forEach(function (m) {
+                if (m.sender) upsertUser(m.sender);
+                if (m.reactions) state.reactions.set(m.id, m.reactions);
+            });
+            // Prepend to the existing bucket, preserving order.
+            const merged = ordered.concat(bucket);
+            state.messages.set(convID, merged);
+            if (convID === state.currentConvID) {
+                const log = document.getElementById('message-log');
+                if (log) {
+                    const previousScrollHeight = log.scrollHeight;
+                    // Rebuild the log; scroll-preserve by anchoring to the
+                    // delta in scrollHeight after re-render.
+                    log.innerHTML = '';
+                    renderMessages(log, convID);
+                    log.scrollTop = log.scrollHeight - previousScrollHeight;
+                }
+            }
+        } catch (e) {
+            console.warn('load older failed', e);
+        } finally {
+            state.historyLoading.delete(convID);
+        }
+    }
 
     // ---- boot ------------------------------------------------------
 
