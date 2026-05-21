@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.10.0...v0.11.0) (2026-05-21)
+
+
+### Features
+
+* **client:** in-app auto-update with signed GitHub Releases manifest ([979d5d1](https://github.com/BiffstaGaming/OreoHouse/commit/979d5d1b27c57c62e6a33b9bcfc166d554d05c50))
+
 ## [0.10.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.9.0...v0.10.0) (2026-05-21)
 
 
