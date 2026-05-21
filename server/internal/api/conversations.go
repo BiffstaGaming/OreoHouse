@@ -38,14 +38,20 @@ func NewConversationsHandler(
 	return &ConversationsHandler{auth: authSvc, convs: convsSvc, messages: msgsSvc}
 }
 
-// Mount registers the /api/conversations/* routes, all behind
-// Bearer-token auth.
+// Mount registers the /api/conversations/* and /api/rooms/* routes,
+// all behind Bearer-token auth.
 func (h *ConversationsHandler) Mount(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(requireAuth(h.auth))
 		r.Get("/api/conversations", h.list)
 		r.Post("/api/conversations/dm", h.createDM)
+		r.Post("/api/conversations/group", h.createGroup)
+		r.Post("/api/conversations/room", h.createRoom)
+		r.Post("/api/conversations/{id}/members", h.addMembers)
+		r.Post("/api/conversations/{id}/leave", h.leave)
 		r.Get("/api/conversations/{id}/messages", h.listMessages)
+		r.Get("/api/rooms", h.listRooms)
+		r.Post("/api/rooms/{id}/join", h.joinRoom)
 	})
 }
 
@@ -105,22 +111,11 @@ func (h *ConversationsHandler) createDM(w http.ResponseWriter, r *http.Request) 
 func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Request) {
 	me, _ := UserFromContext(r.Context())
 
-	convID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil || convID <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "invalid conversation id")
-		return
-	}
-
-	ok, err := h.convs.IsMember(r.Context(), convID, me.ID)
-	if err != nil {
-		slog.Error("membership check failed", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
+	convID, ok := parseIDParam(w, r, "id")
 	if !ok {
-		// Indistinguishable from "no such conversation" to avoid
-		// enumeration; either way the caller isn't allowed to see it.
-		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err := h.requireMembership(w, r, convID, me.ID); err != nil {
 		return
 	}
 
@@ -169,11 +164,243 @@ func (h *ConversationsHandler) toViews(r *http.Request, convs []conversations.Co
 			ID:        c.ID,
 			Type:      c.Type,
 			Name:      c.Name,
+			Topic:     c.Topic,
 			CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano),
 			Members:   membersToUserInfos(members),
 		})
 	}
 	return out, nil
+}
+
+// createGroup handles POST /api/conversations/group.
+func (h *ConversationsHandler) createGroup(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+
+	var req proto.CreateGroupRequest
+	if err := decodeConvJSON(r.Body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	c, err := h.convs.CreateGroup(r.Context(), me.ID, req.Name, req.MemberIDs)
+	if errors.Is(err, conversations.ErrInvalidName) ||
+		errors.Is(err, conversations.ErrNoMembers) {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		slog.Error("create group failed", "error", err, "user_id", me.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	views, err := h.toViews(r, []conversations.Conversation{c})
+	if err != nil {
+		slog.Error("hydrating group failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, views[0])
+}
+
+// createRoom handles POST /api/conversations/room.
+func (h *ConversationsHandler) createRoom(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+
+	var req proto.CreateRoomRequest
+	if err := decodeConvJSON(r.Body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	c, err := h.convs.CreateRoom(r.Context(), me.ID, req.Name, req.Topic)
+	if errors.Is(err, conversations.ErrInvalidName) ||
+		errors.Is(err, conversations.ErrInvalidTopic) {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		slog.Error("create room failed", "error", err, "user_id", me.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	views, err := h.toViews(r, []conversations.Conversation{c})
+	if err != nil {
+		slog.Error("hydrating room failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, views[0])
+}
+
+// addMembers handles POST /api/conversations/{id}/members. The caller
+// must be a member of the target conversation (which must be a group;
+// rooms use POST /api/rooms/{id}/join).
+func (h *ConversationsHandler) addMembers(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	conv, err := h.convs.Get(r.Context(), convID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err != nil {
+		slog.Error("addMembers get conversation failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if conv.Type != conversations.TypeGroup {
+		writeJSONError(w, http.StatusBadRequest, "members can only be added to groups; use /api/rooms/{id}/join for rooms")
+		return
+	}
+
+	if err := h.requireMembership(w, r, conv.ID, me.ID); err != nil {
+		return
+	}
+
+	var req proto.AddMembersRequest
+	if err := decodeConvJSON(r.Body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if len(req.UserIDs) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "user_ids is required")
+		return
+	}
+	for _, uid := range req.UserIDs {
+		if err := h.convs.AddMember(r.Context(), conv.ID, uid); err != nil {
+			slog.Error("AddMember failed", "error", err, "conv_id", conv.ID, "user_id", uid)
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	views, err := h.toViews(r, []conversations.Conversation{conv})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, views[0])
+}
+
+// leave handles POST /api/conversations/{id}/leave. DMs can't be left.
+func (h *ConversationsHandler) leave(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	conv, err := h.convs.Get(r.Context(), convID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err != nil {
+		slog.Error("leave get conversation failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if conv.Type == conversations.TypeDM {
+		writeJSONError(w, http.StatusBadRequest, "cannot leave a DM")
+		return
+	}
+	if err := h.requireMembership(w, r, conv.ID, me.ID); err != nil {
+		return
+	}
+
+	if err := h.convs.RemoveMember(r.Context(), conv.ID, me.ID); err != nil {
+		slog.Error("RemoveMember failed", "error", err, "conv_id", conv.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listRooms handles GET /api/rooms.
+func (h *ConversationsHandler) listRooms(w http.ResponseWriter, r *http.Request) {
+	rooms, err := h.convs.ListRooms(r.Context())
+	if err != nil {
+		slog.Error("listRooms failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]proto.RoomView, len(rooms))
+	for i, room := range rooms {
+		out[i] = proto.RoomView{
+			ID:          room.ID,
+			Name:        room.Name,
+			Topic:       room.Topic,
+			CreatedAt:   room.CreatedAt.UTC().Format(time.RFC3339Nano),
+			MemberCount: room.MemberCount,
+		}
+	}
+	writeJSON(w, http.StatusOK, proto.ListRoomsResponse{Rooms: out})
+}
+
+// joinRoom handles POST /api/rooms/{id}/join. Idempotent — joining a
+// room you're already in just returns the conversation.
+func (h *ConversationsHandler) joinRoom(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	conv, err := h.convs.Get(r.Context(), convID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "room not found")
+		return
+	}
+	if err != nil {
+		slog.Error("joinRoom get failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if conv.Type != conversations.TypeRoom {
+		writeJSONError(w, http.StatusBadRequest, "conversation is not a room")
+		return
+	}
+	if err := h.convs.AddMember(r.Context(), conv.ID, me.ID); err != nil {
+		slog.Error("AddMember (join) failed", "error", err, "room_id", conv.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	views, err := h.toViews(r, []conversations.Conversation{conv})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, views[0])
+}
+
+// requireMembership writes a 404 and returns a non-nil error if the
+// user isn't a member of the given conversation. 404 (not 403) so
+// callers can't enumerate conversation IDs they shouldn't see.
+func (h *ConversationsHandler) requireMembership(w http.ResponseWriter, r *http.Request, convID, userID int64) error {
+	ok, err := h.convs.IsMember(r.Context(), convID, userID)
+	if err != nil {
+		slog.Error("membership check failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return err
+	}
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return errors.New("not a member")
+	}
+	return nil
+}
+
+func parseIDParam(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, key), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSONError(w, http.StatusBadRequest, "invalid id")
+		return 0, false
+	}
+	return id, true
 }
 
 func messageToView(m messages.Message, members []conversations.Member) proto.MessageView {

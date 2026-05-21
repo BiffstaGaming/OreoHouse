@@ -270,3 +270,227 @@ func TestListMessages_RejectsInvalidConversationID(t *testing.T) {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestCreateGroup_HappyPath(t *testing.T) {
+	s := newConvStack(t)
+	alice, token := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	carol, _ := s.seedUserWithSession(t, "carol")
+
+	body := fmt.Sprintf(`{"name":"Family","member_ids":[%d,%d]}`, bob.ID, carol.ID)
+	resp := s.do(t, http.MethodPost, "/api/conversations/group", token, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var view proto.ConversationView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if view.Type != "group" || view.Name != "Family" {
+		t.Errorf("wrong view: %+v", view)
+	}
+	ids := map[int64]bool{}
+	for _, m := range view.Members {
+		ids[m.ID] = true
+	}
+	if !ids[alice.ID] || !ids[bob.ID] || !ids[carol.ID] {
+		t.Errorf("expected creator + 2 invitees, got %+v", view.Members)
+	}
+}
+
+func TestCreateGroup_RejectsOversizeName(t *testing.T) {
+	s := newConvStack(t)
+	_, token := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	huge := strings.Repeat("a", 100)
+	body := fmt.Sprintf(`{"name":%q,"member_ids":[%d]}`, huge, bob.ID)
+	resp := s.do(t, http.MethodPost, "/api/conversations/group", token, body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateRoom_HappyPath(t *testing.T) {
+	s := newConvStack(t)
+	_, token := s.seedUserWithSession(t, "alice")
+
+	resp := s.do(t, http.MethodPost, "/api/conversations/room", token,
+		`{"name":"general","topic":"anything goes"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var view proto.ConversationView
+	_ = json.NewDecoder(resp.Body).Decode(&view)
+	if view.Type != "room" || view.Name != "general" || view.Topic != "anything goes" {
+		t.Errorf("wrong view: %+v", view)
+	}
+	if len(view.Members) != 1 {
+		t.Errorf("expected creator-only initial membership, got %d", len(view.Members))
+	}
+}
+
+func TestCreateRoom_RequiresName(t *testing.T) {
+	s := newConvStack(t)
+	_, token := s.seedUserWithSession(t, "alice")
+	resp := s.do(t, http.MethodPost, "/api/conversations/room", token, `{"name":""}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestAddMembers_AddsToGroupRequiresCallerMember(t *testing.T) {
+	s := newConvStack(t)
+	alice, aliceTok := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	_, carolTok := s.seedUserWithSession(t, "carol")
+	dave, _ := s.seedUserWithSession(t, "dave")
+
+	// Alice creates a group with bob.
+	g, err := s.convs.CreateGroup(context.Background(), alice.ID, "G", []int64{bob.ID})
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	// Carol (not a member) tries to add dave → 404.
+	resp := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/conversations/%d/members", g.ID), carolTok,
+		fmt.Sprintf(`{"user_ids":[%d]}`, dave.ID))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member, got %d", resp.StatusCode)
+	}
+
+	// Alice (a member) adds dave → 200.
+	resp2 := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/conversations/%d/members", g.ID), aliceTok,
+		fmt.Sprintf(`{"user_ids":[%d]}`, dave.ID))
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp2.StatusCode)
+	}
+	var view proto.ConversationView
+	_ = json.NewDecoder(resp2.Body).Decode(&view)
+	ids := map[int64]bool{}
+	for _, m := range view.Members {
+		ids[m.ID] = true
+	}
+	if !ids[dave.ID] {
+		t.Errorf("expected dave in members after add, got %+v", view.Members)
+	}
+}
+
+func TestAddMembers_RejectsForRoom(t *testing.T) {
+	s := newConvStack(t)
+	alice, token := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	r, _ := s.convs.CreateRoom(context.Background(), alice.ID, "general", "")
+
+	resp := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/conversations/%d/members", r.ID), token,
+		fmt.Sprintf(`{"user_ids":[%d]}`, bob.ID))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for rooms, got %d", resp.StatusCode)
+	}
+}
+
+func TestLeave_RemovesSelfAndRejectsDM(t *testing.T) {
+	s := newConvStack(t)
+	alice, aliceTok := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	ctx := context.Background()
+	g, _ := s.convs.CreateGroup(ctx, alice.ID, "G", []int64{bob.ID})
+
+	resp := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/conversations/%d/leave", g.ID), aliceTok, "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", resp.StatusCode)
+	}
+	mems, _ := s.convs.Members(ctx, g.ID)
+	if len(mems) != 1 || mems[0].UserID != bob.ID {
+		t.Errorf("expected only bob remaining, got %+v", mems)
+	}
+
+	dm, _ := s.convs.FindOrCreateDM(ctx, alice.ID, bob.ID)
+	resp2 := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/conversations/%d/leave", dm.ID), aliceTok, "")
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for DM leave, got %d", resp2.StatusCode)
+	}
+}
+
+func TestListRooms_ReturnsAllRoomsWithCounts(t *testing.T) {
+	s := newConvStack(t)
+	alice, token := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	ctx := context.Background()
+	r1, _ := s.convs.CreateRoom(ctx, alice.ID, "general", "")
+	_ = s.convs.AddMember(ctx, r1.ID, bob.ID)
+	_, _ = s.convs.CreateRoom(ctx, alice.ID, "lounge", "afterhours")
+
+	resp := s.do(t, http.MethodGet, "/api/rooms", token, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body proto.ListRoomsResponse
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if len(body.Rooms) != 2 {
+		t.Errorf("expected 2 rooms, got %d", len(body.Rooms))
+	}
+	// Newest first → lounge then general.
+	if body.Rooms[0].Name != "lounge" {
+		t.Errorf("expected newest first (lounge), got %q", body.Rooms[0].Name)
+	}
+	if body.Rooms[1].Name != "general" || body.Rooms[1].MemberCount != 2 {
+		t.Errorf("expected general w/ 2 members, got %+v", body.Rooms[1])
+	}
+}
+
+func TestJoinRoom_AddsCallerAsMemberAndIsIdempotent(t *testing.T) {
+	s := newConvStack(t)
+	alice, _ := s.seedUserWithSession(t, "alice")
+	_, bobTok := s.seedUserWithSession(t, "bob")
+	ctx := context.Background()
+	r, _ := s.convs.CreateRoom(ctx, alice.ID, "general", "")
+
+	resp := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/rooms/%d/join", r.ID), bobTok, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var view proto.ConversationView
+	_ = json.NewDecoder(resp.Body).Decode(&view)
+	if len(view.Members) != 2 {
+		t.Errorf("expected 2 members after join, got %d", len(view.Members))
+	}
+
+	// Join again — should still succeed and still report 2 members.
+	resp2 := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/rooms/%d/join", r.ID), bobTok, "")
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 on idempotent join, got %d", resp2.StatusCode)
+	}
+}
+
+func TestJoinRoom_RejectsGroup(t *testing.T) {
+	s := newConvStack(t)
+	alice, _ := s.seedUserWithSession(t, "alice")
+	_, bobTok := s.seedUserWithSession(t, "bob")
+	g, _ := s.convs.CreateGroup(context.Background(), alice.ID, "private", nil)
+
+	resp := s.do(t, http.MethodPost,
+		fmt.Sprintf("/api/rooms/%d/join", g.ID), bobTok, "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 (not a room), got %d", resp.StatusCode)
+	}
+}
