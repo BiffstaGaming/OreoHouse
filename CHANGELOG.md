@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.16.0...v0.16.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **themes:** dark-mode contrast — reply quote (Classic) + login logo (Aurora) ([6e04485](https://github.com/BiffstaGaming/OreoHouse/commit/6e0448521c0ab0865a5def77dd7758db8e043f24))
+* **themes:** dark-mode contrast on reply quote (Classic) + login logo (Aurora) ([1666509](https://github.com/BiffstaGaming/OreoHouse/commit/166650913e8dcd11eabcfb6ee7724f274ed79414))
+* **web:** cache-bust CSS + JS so deploys aren't stuck behind browser cache ([b31792d](https://github.com/BiffstaGaming/OreoHouse/commit/b31792df3333d7dfe9e52fcfd8a2037fbc8b9168))
+* **web:** cache-bust CSS + JS via filemtime version query ([7847e6f](https://github.com/BiffstaGaming/OreoHouse/commit/7847e6fdacf207f80e36bb7c4f9196d94921df6a))
+
 ## [0.16.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.15.0...v0.16.0) (2026-05-21)
 
 
