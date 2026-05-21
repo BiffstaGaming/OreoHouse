@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	server "github.com/BiffstaGaming/OreoHouse/server"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/admin"
@@ -104,6 +105,20 @@ func runServe(args []string) error {
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	// The Tauri client's webview runs at a different origin than the
+	// server (https://tauri.localhost on Windows, tauri://localhost on
+	// other platforms), so REST responses need explicit CORS headers
+	// for the browser to let the client read them. Same threat model
+	// as InsecureSkipVerify on /ws — LAN-only deployment, allow any
+	// origin. We don't use cookies, so credentials stay off and the
+	// wildcard origin is allowed.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 	r.Get("/health", handleHealth)
 	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
