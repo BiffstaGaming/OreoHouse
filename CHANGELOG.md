@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.8.0...v0.8.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **client:** per-window event filtering + single-click close on chat windows ([16da96f](https://github.com/BiffstaGaming/OreoHouse/commit/16da96f8dcb4435bb0d86901f245c58fb945b7f4))
+
 ## [0.8.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.7.0...v0.8.0) (2026-05-21)
 
 
