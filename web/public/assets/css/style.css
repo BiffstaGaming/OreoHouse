@@ -1241,3 +1241,245 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
     color-scheme: light;
 }
 :root[data-theme="classic"] body { background: var(--msn-bg); color: var(--msn-text); }
+
+/* ==========================================================================
+ * PARITY-PASS additions: reply quotes, edited/deleted markers, pin badge,
+ * tick marks, status menu, sidebar action buttons, chat-header actions,
+ * composer context (reply/edit pill), modals for group/room/browse/add-
+ * members/pins, member picker, scroll-load indicator.
+ * ========================================================================== */
+
+/* --- composer-context (reply / edit pill above the input) --- */
+.composer-context-bar { margin-bottom: 0.25rem; }
+.composer-context {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0.55rem;
+    border-radius: 0.4rem;
+    font-size: 0.82rem;
+    background: rgba(120,140,200,.12);
+    border: 1px solid var(--msn-border);
+}
+.composer-context-reply { border-left: 3px solid var(--msn-blue-light); }
+.composer-context-edit  { border-left: 3px solid #d6b769; background: rgba(214,183,105,.14); }
+.composer-context-label { font-weight: 600; white-space: nowrap; }
+.composer-context-body {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+}
+.composer-context-cancel {
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 0 0.4rem;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+/* --- msg bubble: reply quote, edited, deleted, pin badge, ticks --- */
+.msg-quote {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.35rem 0.5rem 0.4rem;
+    margin-bottom: 0.35rem;
+    background: rgba(127,127,127,.1);
+    border-left: 3px solid var(--msn-blue-light);
+    border-radius: 0.25rem;
+    font-size: 0.78rem;
+    overflow: hidden;
+}
+.msg-quote-arrow { opacity: 0.65; margin-right: 0.15rem; }
+.msg-quote-sender { font-weight: 600; color: var(--msn-blue-dark); font-size: 0.78rem; }
+.msg-quote-body {
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    opacity: 0.85;
+}
+.msg-quote-deleted { font-style: italic; opacity: 0.7; }
+.msg-edited { font-size: 0.72rem; opacity: 0.6; margin-left: 0.2rem; font-style: italic; }
+.msg-deleted { font-style: italic; opacity: 0.7; }
+.msg-pinned-badge { font-size: 0.75rem; opacity: 0.85; margin-left: 0.2rem; }
+
+.msg-ticks {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 0.15rem;
+    align-self: flex-end;
+    font-size: 0.75rem;
+    font-family: ui-monospace, monospace;
+    user-select: none;
+    cursor: help;
+}
+.msg-ticks-sent    { color: rgba(127,127,127,.6); }
+.msg-ticks-partial { color: rgba(74,141,232,.85); }
+.msg-ticks-read    { color: var(--msn-blue); }
+
+/* Quote-inside-mine-bubble legibility — mirror desktop logic. */
+:root[data-theme="aurora"] .msg-mine .msg-quote {
+    background: rgba(255,255,255,.1);
+    border-left-color: rgba(255,255,255,.55);
+}
+:root[data-theme="aurora"] .msg-mine .msg-quote-sender { color: rgba(255,255,255,.95); }
+:root[data-theme="aurora"] .msg-mine .msg-quote-body   { color: rgba(255,255,255,.82); }
+:root[data-theme="daylight"] .msg-mine .msg-quote {
+    background: rgba(255,255,255,.18);
+    border-left-color: rgba(255,255,255,.7);
+}
+:root[data-theme="daylight"] .msg-mine .msg-quote-sender { color: rgba(255,255,255,.98); }
+:root[data-theme="daylight"] .msg-mine .msg-quote-body   { color: rgba(255,255,255,.85); }
+:root[data-theme="aurora"] .msg-mine .msg-ticks-sent,
+:root[data-theme="aurora"] .msg-mine .msg-ticks-partial,
+:root[data-theme="aurora"] .msg-mine .msg-ticks-read,
+:root[data-theme="daylight"] .msg-mine .msg-ticks-sent,
+:root[data-theme="daylight"] .msg-mine .msg-ticks-partial,
+:root[data-theme="daylight"] .msg-mine .msg-ticks-read { color: rgba(255,255,255,.88); }
+
+/* --- expanded msg-toolbar with reply/edit/delete --- */
+.tool-btn-danger:hover { background: rgba(220,70,70,.18); }
+
+/* --- sidebar action buttons --- */
+.sidebar-actions {
+    display: flex;
+    gap: 0.3rem;
+    margin-bottom: 0.5rem;
+}
+.sidebar-action {
+    flex: 1;
+    padding: 0.35rem 0.4rem;
+    font-size: 0.78rem;
+    border-radius: 0.4rem;
+}
+
+/* --- chat-header action cluster --- */
+.chat-actions { display: flex; gap: 0.25rem; margin-left: 0.5rem; }
+.composer-icon-danger {
+    border-color: rgba(220,70,70,.4);
+    color: #d44;
+}
+.composer-icon-danger:hover { background: rgba(220,70,70,.16); }
+
+/* --- topbar status chip + status menu --- */
+.topbar-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.25);
+    color: #fff;
+    font-size: 0.82rem;
+    text-transform: capitalize;
+    max-width: 18rem;
+}
+.topbar-status:hover { background: rgba(255,255,255,.24); }
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot-online  { background: radial-gradient(circle at 30% 30%, #b6f6a0, #3eaa42); }
+.status-dot-away    { background: radial-gradient(circle at 30% 30%, #ffe18f, #e8a200); }
+.status-dot-busy    { background: radial-gradient(circle at 30% 30%, #ffaeae, #c41616); }
+.status-dot-offline { background: #b8c2d6; }
+.status-label { font-weight: 600; }
+.status-custom { opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.status-popover {
+    position: fixed;
+    z-index: 70;
+    background: var(--msn-bg-soft);
+    border: 1px solid var(--msn-border);
+    border-radius: 0.45rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    min-width: 16rem;
+    padding: 0.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.status-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid transparent;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: var(--msn-text);
+    text-align: left;
+}
+.status-option:hover { background: rgba(120,140,200,.12); }
+.status-option-active { background: rgba(120,140,200,.18); border-color: var(--msn-blue-light); font-weight: 600; }
+.status-custom-row {
+    display: flex;
+    gap: 0.35rem;
+    padding: 0.35rem 0;
+    border-top: 1px solid var(--msn-border-soft);
+    margin-top: 0.2rem;
+}
+.status-custom-input {
+    flex: 1;
+    padding: 0.4rem 0.55rem;
+    font: inherit;
+    border-radius: 0.3rem;
+    border: 1px solid var(--msn-border);
+}
+.status-custom-save { padding: 0.4rem 0.7rem; font: inherit; }
+
+/* --- member picker (groups + add members) --- */
+.member-picker {
+    max-height: 16rem;
+    overflow-y: auto;
+    border: 1px solid var(--msn-border);
+    border-radius: 0.35rem;
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.member-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.3rem;
+    cursor: pointer;
+}
+.member-picker-row:hover { background: rgba(120,140,200,.1); }
+.member-picker-row-checked { background: rgba(74,141,232,.16); }
+.member-picker-name { font-weight: 500; }
+
+/* --- rooms-list (Browse Rooms modal) --- */
+.rooms-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; max-height: 24rem; overflow-y: auto; }
+.room-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--msn-border-soft);
+    border-radius: 0.4rem;
+    background: var(--msn-bg-soft);
+}
+.room-meta { flex: 1; min-width: 0; }
+.room-name { font-weight: 700; }
+.room-topic { font-size: 0.82rem; color: var(--msn-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-sub   { font-size: 0.74rem; color: var(--msn-text-muted); margin-top: 0.1rem; }
+
+/* --- pin list modal --- */
+.pin-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 28rem; overflow-y: auto; }
+.pin-row { padding: 0.5rem 0.65rem; border: 1px solid var(--msn-border-soft); border-left: 3px solid var(--msn-blue-light); border-radius: 0.4rem; background: var(--msn-bg-soft); }
+.pin-meta { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--msn-text-muted); margin-bottom: 0.25rem; }
+.pin-sender { font-weight: 700; color: var(--msn-blue-dark); }
+.pin-body { white-space: pre-wrap; word-break: break-word; }
+.pin-footer { margin-top: 0.35rem; font-size: 0.72rem; color: var(--msn-text-muted); }

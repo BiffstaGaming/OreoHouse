@@ -156,6 +156,11 @@
         return (r && r.items) || [];
     }
 
+    async function listPins(conversationID) {
+        const r = await request('GET', '/api/conversations/' + conversationID + '/pins');
+        return (r && r.pins) || [];
+    }
+
     global.OreoAPI = {
         listConversations: listConversations,
         listMessages: listMessages,
@@ -175,5 +180,6 @@
         searchMessages: searchMessages,
         listConversationMedia: listConversationMedia,
         listConversationLinks: listConversationLinks,
+        listPins: listPins,
     };
 })(window);

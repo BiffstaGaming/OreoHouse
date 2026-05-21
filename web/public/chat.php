@@ -43,6 +43,7 @@ $bootstrap = [
 <script src="<?= htmlspecialchars(oreo_asset('/assets/js/api.js')) ?>"></script>
 <script src="<?= htmlspecialchars(oreo_asset('/assets/js/ws.js')) ?>"></script>
 <script src="<?= htmlspecialchars(oreo_asset('/assets/js/ui.js')) ?>"></script>
+<script src="<?= htmlspecialchars(oreo_asset('/assets/js/helpers.js')) ?>"></script>
 <script src="<?= htmlspecialchars(oreo_asset('/assets/js/app.js')) ?>"></script>
 </body>
 </html>
