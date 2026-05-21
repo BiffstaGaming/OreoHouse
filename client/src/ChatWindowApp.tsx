@@ -69,54 +69,95 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
     let cancelled = false;
 
     async function setup() {
+      // Filter every listener by THIS webview's label so a main→chat
+      // emitTo("chat-2", ...) doesn't also fire here in chat-1.
+      // The default listen target is `{ kind: 'Any' }` which receives
+      // events for any target — exactly the leak we don't want.
+      const myLabel = getCurrentWindow().label;
+      const opts = {
+        target: { kind: "WebviewWindow" as const, label: myLabel },
+      };
+
       unlisteners.push(
-        await listen<HydratePayload>(EVT.Hydrate, (e) => {
-          setSession(e.payload.session);
-          setConv(e.payload.conv);
-          setMessages([...e.payload.messages].sort((a, b) => a.id - b.id));
-          setTypers(
-            new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
-          );
-          setMuted(e.payload.muted);
-        }),
-        await listen<MessagePayload>(EVT.IncomingMessage, (e) => {
-          const m = e.payload.message;
-          setMessages((prev) => {
-            if (prev.some((x) => x.id === m.id)) return prev;
-            return [...prev, m].sort((a, b) => a.id - b.id);
-          });
-          const me = sessionRef.current;
-          if (me && m.sender.id !== me.user.id && !mutedRef.current) {
-            playMessageBlip();
-          }
-        }),
-        await listen<TypingPayload>(EVT.IncomingTyping, (e) => {
-          setTypers((prev) => {
-            const next = new Map(prev);
-            next.set(e.payload.user.id, {
-              username: e.payload.user.username,
-              expiresAt: e.payload.expiresAt,
+        await listen<HydratePayload>(
+          EVT.Hydrate,
+          (e) => {
+            // Defensive: ignore a hydrate intended for some other conv.
+            if (e.payload.conv.id !== convID) return;
+            setSession(e.payload.session);
+            setConv(e.payload.conv);
+            setMessages([...e.payload.messages].sort((a, b) => a.id - b.id));
+            setTypers(
+              new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
+            );
+            setMuted(e.payload.muted);
+          },
+          opts,
+        ),
+        await listen<MessagePayload>(
+          EVT.IncomingMessage,
+          (e) => {
+            const m = e.payload.message;
+            if (m.conversation_id !== convID) return;
+            setMessages((prev) => {
+              if (prev.some((x) => x.id === m.id)) return prev;
+              return [...prev, m].sort((a, b) => a.id - b.id);
             });
-            return next;
-          });
-        }),
-        await listen<NudgePayload>(EVT.IncomingNudge, () => {
-          setShaking(true);
-          window.setTimeout(() => setShaking(false), SHAKE_DURATION_MS);
-          if (!mutedRef.current) playNudge();
-          void flashWindowIfUnfocused();
-        }),
-        await listen<MembersChangedPayload>(EVT.MembersChanged, (e) => {
-          setConv((prev) =>
-            prev ? { ...prev, members: e.payload.members } : prev,
-          );
-        }),
-        await listen<ConvUpdatedPayload>(EVT.ConvUpdated, (e) => {
-          setConv(e.payload.conv);
-        }),
-        await listen<{ muted: boolean }>(EVT.MutedChanged, (e) => {
-          setMuted(e.payload.muted);
-        }),
+            const me = sessionRef.current;
+            if (me && m.sender.id !== me.user.id && !mutedRef.current) {
+              playMessageBlip();
+            }
+          },
+          opts,
+        ),
+        await listen<TypingPayload>(
+          EVT.IncomingTyping,
+          (e) => {
+            setTypers((prev) => {
+              const next = new Map(prev);
+              next.set(e.payload.user.id, {
+                username: e.payload.user.username,
+                expiresAt: e.payload.expiresAt,
+              });
+              return next;
+            });
+          },
+          opts,
+        ),
+        await listen<NudgePayload>(
+          EVT.IncomingNudge,
+          () => {
+            setShaking(true);
+            window.setTimeout(() => setShaking(false), SHAKE_DURATION_MS);
+            if (!mutedRef.current) playNudge();
+            void flashWindowIfUnfocused();
+          },
+          opts,
+        ),
+        await listen<MembersChangedPayload>(
+          EVT.MembersChanged,
+          (e) => {
+            setConv((prev) =>
+              prev ? { ...prev, members: e.payload.members } : prev,
+            );
+          },
+          opts,
+        ),
+        await listen<ConvUpdatedPayload>(
+          EVT.ConvUpdated,
+          (e) => {
+            if (e.payload.conv.id !== convID) return;
+            setConv(e.payload.conv);
+          },
+          opts,
+        ),
+        await listen<{ muted: boolean }>(
+          EVT.MutedChanged,
+          (e) => {
+            setMuted(e.payload.muted);
+          },
+          opts,
+        ),
       );
       if (cancelled) {
         for (const u of unlisteners) u();

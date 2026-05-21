@@ -7,7 +7,12 @@ import {
   type FormEvent,
 } from "react";
 
-import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  emitTo,
+  listen,
+  TauriEvent,
+  type UnlistenFn,
+} from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getAllWindows } from "@tauri-apps/api/window";
 
@@ -638,7 +643,13 @@ function ChatScreen({
     openChatsRef.current.add(convID);
 
     // Persist geometry on resize / move (debounced inside the
-    // listeners). Drop tracking when the window is destroyed.
+    // listeners). We deliberately DON'T register an onCloseRequested
+    // listener — Tauri's wrapper for that turns the close into a
+    // two-step "fire handler then this.destroy()" dance which can
+    // require two clicks on some OS configurations. Without a
+    // close-requested listener, clicking [X] follows the default
+    // path and closes in one click. We listen for the destroyed
+    // event afterwards to clean up local state.
     let saveTimer: number | undefined;
     const queueSave = async () => {
       if (saveTimer) window.clearTimeout(saveTimer);
@@ -662,15 +673,19 @@ function ChatScreen({
 
     const offResized = await win.onResized(() => void queueSave());
     const offMoved = await win.onMoved(() => void queueSave());
-    const offClosed = await win.onCloseRequested(() => {
-      offResized();
-      offMoved();
-      offClosed();
-      openChatsRef.current.delete(convID);
-      if (focusedConvRef.current === convID) {
-        focusedConvRef.current = null;
-      }
-    });
+    const offDestroyed = await listen<unknown>(
+      TauriEvent.WINDOW_DESTROYED,
+      () => {
+        offResized();
+        offMoved();
+        offDestroyed();
+        openChatsRef.current.delete(convID);
+        if (focusedConvRef.current === convID) {
+          focusedConvRef.current = null;
+        }
+      },
+      { target: { kind: "WebviewWindow", label } },
+    );
   }
 
   async function openChatWithUser(user: UserInfo) {
