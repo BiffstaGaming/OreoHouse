@@ -124,6 +124,7 @@ export interface ConversationView {
   id: number;
   type: "dm" | "group" | "room";
   name?: string;
+  topic?: string;
   created_at: string;
   members: UserInfo[];
 }
@@ -134,6 +135,32 @@ export interface ListConversationsResponse {
 
 export interface CreateDMRequest {
   user_id: number;
+}
+
+export interface CreateGroupRequest {
+  name?: string;
+  member_ids: number[];
+}
+
+export interface CreateRoomRequest {
+  name: string;
+  topic?: string;
+}
+
+export interface AddMembersRequest {
+  user_ids: number[];
+}
+
+export interface RoomView {
+  id: number;
+  name: string;
+  topic?: string;
+  created_at: string;
+  member_count: number;
+}
+
+export interface ListRoomsResponse {
+  rooms: RoomView[];
 }
 
 export interface MessageView {

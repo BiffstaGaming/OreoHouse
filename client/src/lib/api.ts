@@ -1,12 +1,16 @@
 import type {
   ConversationView,
   CreateDMRequest,
+  CreateGroupRequest,
+  CreateRoomRequest,
   ErrorResponse,
   ListConversationsResponse,
   ListMessagesResponse,
+  ListRoomsResponse,
   LoginRequest,
   LoginResponse,
   MessageView,
+  RoomView,
 } from "../types/proto";
 
 // login POSTs /api/auth/login and returns the parsed body on 200. On
@@ -87,6 +91,92 @@ export async function createDM(
     token,
     "/api/conversations/dm",
     { user_id: userID } satisfies CreateDMRequest,
+  );
+}
+
+// createGroup POSTs /api/conversations/group. The creator is always
+// included; memberIDs is the list of additional users to invite.
+export async function createGroup(
+  serverUrl: string,
+  token: string,
+  name: string,
+  memberIDs: number[],
+): Promise<ConversationView> {
+  return postJSON<ConversationView>(
+    serverUrl,
+    token,
+    "/api/conversations/group",
+    { name, member_ids: memberIDs } satisfies CreateGroupRequest,
+  );
+}
+
+// createRoom POSTs /api/conversations/room. Name is required.
+export async function createRoom(
+  serverUrl: string,
+  token: string,
+  name: string,
+  topic: string = "",
+): Promise<ConversationView> {
+  return postJSON<ConversationView>(
+    serverUrl,
+    token,
+    "/api/conversations/room",
+    { name, topic } satisfies CreateRoomRequest,
+  );
+}
+
+// leaveConversation POSTs /api/conversations/{id}/leave. Returns when
+// the server has removed the caller from the member list.
+export async function leaveConversation(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+): Promise<void> {
+  const url = new URL(
+    `/api/conversations/${conversationID}/leave`,
+    serverUrl,
+  );
+  const resp = await fetch(url.toString(), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`;
+    try {
+      const body = (await resp.json()) as ErrorResponse;
+      if (body.error) msg = body.error;
+    } catch {
+      /* keep fallback */
+    }
+    throw new Error(msg);
+  }
+}
+
+// listRooms GETs /api/rooms — every room in the system with member
+// counts, newest first.
+export async function listRooms(
+  serverUrl: string,
+  token: string,
+): Promise<RoomView[]> {
+  const body = await getJSON<ListRoomsResponse>(
+    serverUrl,
+    token,
+    "/api/rooms",
+  );
+  return body.rooms;
+}
+
+// joinRoom POSTs /api/rooms/{id}/join. Idempotent.
+export async function joinRoom(
+  serverUrl: string,
+  token: string,
+  roomID: number,
+): Promise<ConversationView> {
+  return postJSON<ConversationView>(
+    serverUrl,
+    token,
+    `/api/rooms/${roomID}/join`,
+    {},
   );
 }
 

@@ -12,6 +12,7 @@ body {
   padding: 0;
 }
 
+.phase4,
 .phase3 {
   height: 100vh;
   display: flex;
@@ -110,7 +111,7 @@ button:disabled {
 .panes {
   flex: 1;
   display: grid;
-  grid-template-columns: 16rem 1fr;
+  grid-template-columns: 18rem 1fr;
   min-height: 0;
 }
 
