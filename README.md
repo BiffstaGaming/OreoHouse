@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 6 — real UI landed. The desktop client is now MSN/BeeBEEP-style: contact list as the primary view (online, offline DM partners, groups & rooms), with conversations opening in floating draggable chat windows on top. Closing the main window hides the app to the system tray (real Tauri tray icon with Show/Quit menu and left-click toggle); messages arriving in background conversations bump per-conv unread badges, flash the taskbar via `requestUserAttention`, and prefix the unread total onto the window title MSN-style. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 7 — old-school feel landed. On top of Phase 6's contact-list-and-floating-windows UI, every Messenger ritual is now wired up: custom status (`online` / `away` / `busy` + a free-text line, persisted across sessions), typing indicators in the open chat, nudges that shake the recipient's window and rumble through the speakers, a short blip on incoming messages, and a per-machine mute toggle. The CSS got an MSN palette pass too — blue gradient title bars, beveled buttons, radial-gradient status dots — so the app finally *looks* the part. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -107,11 +107,12 @@ Returns 204 even if the token doesn't match a live session — logout is idempot
 
 After login, the client opens a single WebSocket to `ws://host:8080/ws?token=<token>`. The token comes from `POST /api/auth/login`. Missing or invalid tokens are rejected with HTTP 401 *before* the upgrade — there is no in-band auth error.
 
-Presence is derived from connection state:
+Presence is derived from connection state plus a per-user discrete state and an optional custom text line:
 
-- A user "comes online" when their **first** connection opens. The server broadcasts `presence` with `status="online"` to every connected client.
-- A user "goes offline" when their **last** connection closes (so two laptops + a phone count as one online user). `presence` with `status="offline"` is broadcast and `users.last_seen_at` is updated.
-- Immediately after a successful upgrade the server sends a `welcome` message with a snapshot of who's currently online, so the client doesn't poll.
+- A user "comes online" when their **first** connection opens. The server broadcasts `presence` with `state="online"` to every connected client.
+- A user "goes offline" when their **last** connection closes (so two laptops + a phone count as one online user). `presence` with `state="offline"` is broadcast and `users.last_seen_at` is updated.
+- Immediately after a successful upgrade the server sends a `welcome` message with a snapshot of who's currently online — each entry carries `state` (`online` / `away` / `busy`) and an optional `custom_text` — so the client doesn't poll.
+- A client can send `status` to change its discrete state to `online` / `away` / `busy` and/or set a `custom_text` line (e.g. "in a meeting"). The text is persisted to `users.status_text` so it survives reconnects; discrete state is session-only and defaults to `online` on each fresh connection. The server validates and broadcasts a `presence` event with the new state + text to every online client.
 
 Messaging:
 
@@ -128,7 +129,7 @@ Attachments:
 - Two-step send. Client first POSTs each file to `/api/uploads` (returns an `AttachmentView` with id + metadata + image dimensions when applicable). Then it sends a normal WS `message` with `attachment_ids: [N, …]`. Server validates that the sender owns each id and that none are already linked, then persists the message and links them atomically (from the user's perspective) before broadcasting the `message` event with the full `attachments[]` inlined.
 - Images render inline in the client; other files render as a download chip. The image source URL carries `?token=` because `<img src>` can't set an Authorization header.
 
-Full message catalog (welcome, presence, message, conversation_added, conversation_members_changed, error, ping, pong) plus reserved future types lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
+Full message catalog (welcome, presence, message, conversation_added, conversation_members_changed, typing, nudge, status, error, ping, pong) lives in [`docs/protocol.md`](docs/protocol.md). The TypeScript mirror is at [`client/src/types/proto.ts`](client/src/types/proto.ts).
 
 ## User management
 
@@ -215,6 +216,11 @@ The packaged desktop app behaves like MSN Messenger / BeeBEEP:
 - **Chat windows** open as floating cards layered above the contact list. Drag the title bar to move; click anywhere to bring to front; the minimize button collapses to a taskbar-style row along the bottom; the close button removes the window entirely (history is preserved in the DB). Multiple chats can be open at once; the Phase 6 windows are CSS-positioned within the single Tauri window (native multi-window can land in Phase 10 polish).
 - **System tray** is wired by the Tauri shell: left-click toggles the main window, right-click opens a Show / Quit menu, and the window's [X] button hides to tray rather than exiting. Quit is only reachable via the tray menu, so the app keeps receiving WebSocket events in the background.
 - **Notifications** are connection-state driven, no native push needed. A message in any conversation other than the focused front window bumps that conv's unread badge; if the main window is unfocused or hidden, the app also asks the OS for user attention (Windows taskbar flash, macOS dock bounce). The taskbar window title is prefixed with `(N)` for the total unread count.
+- **Presence & status** mirror Messenger. The topbar dropdown picks between **Online**, **Away**, and **Busy**, with an optional free-text status line (e.g. "in a meeting"). Custom text persists across sessions (server-side `users.status_text` column); discrete state defaults to online on each connection. Contact rows render a green / yellow / red radial-gradient dot plus their custom text.
+- **Typing indicators** appear under the chat composer ("Alice is typing…") and time out after 5 s of silence. Senders throttle to one typing event per 2 s to keep the wire quiet.
+- **Nudges** are a 👋 button in each chat-window title bar. The recipient's window shakes for ~700 ms, plays a low rumble, restores from minimized if needed, and flashes the taskbar. Senders see a 3 s cooldown on the button to avoid spam.
+- **Sounds** are synthesised on demand via the Web Audio API — a short blip on incoming chat messages, a low square-wave rumble on nudges. The 🔊 / 🔇 toggle in the topbar persists per-machine in `localStorage`; no audio assets are bundled (Phase 10 polish can swap in real samples).
+- **Look & feel** got an MSN palette pass: blue gradient title bars on the chat windows and topbar, beveled white-to-blue buttons, radial-gradient status dots, and blue-bubbled own messages. Segoe UI as the primary font, with dark-mode variants of every gradient.
 
 ## Windows client releases
 
