@@ -39,6 +39,10 @@ export type HydratePayload = {
   // Initial muted-sound preference (so we don't have to share
   // localStorage races with the main window).
   muted: boolean;
+  // True when THIS conversation has been individually muted by the
+  // user. Server-side messages still arrive, but the chat window
+  // suppresses its blip + flash and main suppresses the badge bump.
+  conv_muted: boolean;
   // Initial read-state map for this conversation: user_id →
   // last_read_message_id. Hydrated from welcome.reads + any live
   // read_receipt events that arrived before the window opened.
@@ -147,6 +151,7 @@ export const EVT = {
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
   MutedChanged: "oreo:chat:muted_changed",
+  ConvMuteChanged: "oreo:chat:conv_mute_changed",
   // chat → main (plain emit, conv id is in the payload)
   Ready: "oreo:chat:ready",
   Send: "oreo:chat:send",
@@ -155,6 +160,7 @@ export const EVT = {
   OutgoingReact: "oreo:chat:react_out",
   OutgoingEdit: "oreo:chat:edit_out",
   OutgoingDelete: "oreo:chat:delete_out",
+  ToggleConvMute: "oreo:chat:toggle_conv_mute",
   Focused: "oreo:chat:focused",
   Leave: "oreo:chat:leave",
 } as const;

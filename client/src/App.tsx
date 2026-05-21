@@ -51,6 +51,10 @@ import {
   type UserUpdatedPayload,
 } from "./lib/chatBridge";
 import {
+  loadMutedConvs,
+  saveMutedConvs,
+} from "./lib/mutedConvs";
+import {
   clearSession as clearStoredSession,
   loadLastServerUrl,
   loadSession,
@@ -62,6 +66,8 @@ import {
   playMessageBlip,
   playNudge,
   playReactionPop,
+  playSignIn,
+  playSignOut,
   setMuted as setMutedPersisted,
 } from "./lib/sounds";
 import {
@@ -73,6 +79,7 @@ import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import { Avatar } from "./components/Avatar";
 import { ProfileModal } from "./components/ProfileModal";
+import { SearchModal } from "./components/SearchModal";
 import type {
   ConversationView,
   MessageView,
@@ -340,6 +347,17 @@ function ChatScreen({
     new Map(),
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Set of conv IDs the user has individually muted (suppresses sound
+  // + flash + unread on incoming messages for those convs). Persisted
+  // per-machine via localStorage.
+  const [mutedConvs, setMutedConvs] = useState<Set<number>>(() => loadMutedConvs());
+  const mutedConvsRef = useRef(mutedConvs);
+  mutedConvsRef.current = mutedConvs;
+  // Sign-in / sign-out sounds are gated for the first few seconds
+  // after we connect, so the welcome → presence delta burst doesn't
+  // turn into a chorus. Armed once the page has been live a moment.
+  const presenceSoundsArmedRef = useRef(false);
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -469,7 +487,15 @@ function ChatScreen({
       onError: () => setStatus("error"),
     });
     wsRef.current = client;
+    // Arm presence sounds after 3 s — enough for the initial welcome
+    // + presence burst to settle.
+    presenceSoundsArmedRef.current = false;
+    const armT = window.setTimeout(() => {
+      presenceSoundsArmedRef.current = true;
+    }, 3000);
     return () => {
+      window.clearTimeout(armT);
+      presenceSoundsArmedRef.current = false;
       client.close();
       wsRef.current = null;
     };
@@ -510,6 +536,7 @@ function ChatScreen({
               (typingRef.current.get(cid) ?? new Map()).values(),
             ),
             muted: mutedRef.current,
+            conv_muted: mutedConvsRef.current.has(cid),
             reads: readsObj,
             reactions: reactionsObj,
           };
@@ -546,6 +573,25 @@ function ChatScreen({
             });
           },
         ),
+        await listen<ChatToMainEnvelope<{}>>(EVT.ToggleConvMute, (e) => {
+          const cid = e.payload.conversation_id;
+          setMutedConvs((prev) => {
+            const next = new Set(prev);
+            const becomingMuted = !next.has(cid);
+            if (becomingMuted) {
+              next.add(cid);
+            } else {
+              next.delete(cid);
+            }
+            saveMutedConvs(next);
+            // Echo the new state back so the chat window can flip
+            // its title-bar icon.
+            void emitTo(`chat-${cid}`, EVT.ConvMuteChanged, {
+              muted: becomingMuted,
+            });
+            return next;
+          });
+        }),
         await listen<ChatToMainEnvelope<{}>>(EVT.OutgoingTyping, (e) => {
           if (!wsRef.current) return;
           wsRef.current.send({
@@ -642,8 +688,26 @@ function ChatScreen({
       case "presence":
         upsertUser(msg.user);
         setOnline((prev) => {
+          const wasOnline = prev.some((p) => p.user.id === msg.user.id);
           if (msg.state === "offline") {
+            // Play sign-out sound only on the offline EDGE — once
+            // presence sounds are armed and not for self.
+            if (
+              wasOnline &&
+              presenceSoundsArmedRef.current &&
+              msg.user.id !== session.user.id
+            ) {
+              playSignOut();
+            }
             return prev.filter((p) => p.user.id !== msg.user.id);
+          }
+          // Sign-in sound only on the online EDGE (wasn't in the list).
+          if (
+            !wasOnline &&
+            presenceSoundsArmedRef.current &&
+            msg.user.id !== session.user.id
+          ) {
+            playSignIn();
           }
           const next = prev.filter((p) => p.user.id !== msg.user.id);
           next.push({
@@ -932,6 +996,9 @@ function ChatScreen({
 
     const isFocused = focusedConvRef.current === m.conversation_id;
     if (isFocused) return;
+
+    // Conv-muted: silent. No badge bump, no flash, no sound.
+    if (mutedConvsRef.current.has(m.conversation_id)) return;
 
     setUnreadByConv((prev) => {
       const out = new Map(prev);
@@ -1264,6 +1331,14 @@ function ChatScreen({
           <button
             type="button"
             className="mute-toggle"
+            onClick={() => setSearchOpen(true)}
+            title="Search messages"
+          >
+            🔍
+          </button>
+          <button
+            type="button"
+            className="mute-toggle"
             onClick={toggleMuted}
             title={muted ? "Unmute sounds" : "Mute sounds"}
           >
@@ -1281,6 +1356,17 @@ function ChatScreen({
           serverUrl={session.serverUrl}
           token={session.token}
           onClose={() => setProfileOpen(false)}
+        />
+      )}
+      {searchOpen && (
+        <SearchModal
+          serverUrl={session.serverUrl}
+          token={session.token}
+          conversations={conversations}
+          userCache={userCache}
+          self={session.user}
+          onJump={(cid) => void openChatWindow(cid)}
+          onClose={() => setSearchOpen(false)}
         />
       )}
 

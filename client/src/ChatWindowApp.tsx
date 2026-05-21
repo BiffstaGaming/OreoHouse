@@ -44,6 +44,7 @@ import {
 import { Avatar } from "./components/Avatar";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { QUICK_REACTIONS } from "./lib/emoji";
+import { expandSlashCommand } from "./lib/slashCommands";
 import { displayNameOf } from "./lib/users";
 
 import "./App.css";
@@ -66,6 +67,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   >(new Map());
   const [shaking, setShaking] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [convMuted, setConvMuted] = useState(false);
   // user_id → highest message_id they've read in this conversation.
   const [reads, setReads] = useState<Map<number, number>>(new Map());
   // message_id → reaction groups for that message.
@@ -82,6 +84,8 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   sessionRef.current = session;
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const convMutedRef = useRef(convMuted);
+  convMutedRef.current = convMuted;
 
   // ---- IPC: subscribe + announce ready ------------------------------
 
@@ -111,6 +115,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
             );
             setMuted(e.payload.muted);
+            setConvMuted(e.payload.conv_muted);
             const reads = new Map<number, number>();
             for (const [uid, lr] of Object.entries(e.payload.reads ?? {})) {
               reads.set(Number(uid), lr);
@@ -147,7 +152,12 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               return next;
             });
             const me = sessionRef.current;
-            if (me && m.sender.id !== me.user.id && !mutedRef.current) {
+            if (
+              me &&
+              m.sender.id !== me.user.id &&
+              !mutedRef.current &&
+              !convMutedRef.current
+            ) {
               playMessageBlip();
             }
           },
@@ -198,6 +208,13 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           EVT.MutedChanged,
           (e) => {
             setMuted(e.payload.muted);
+          },
+          opts,
+        ),
+        await listen<{ muted: boolean }>(
+          EVT.ConvMuteChanged,
+          (e) => {
+            setConvMuted(e.payload.muted);
           },
           opts,
         ),
@@ -368,6 +385,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
       reads={reads}
       reactions={reactions}
       userCache={userCache}
+      convMuted={convMuted}
     />
   );
 }
@@ -410,6 +428,7 @@ function ChatBody({
   reads,
   reactions,
   userCache,
+  convMuted,
 }: {
   session: SessionSnapshot;
   conv: ConversationView;
@@ -420,6 +439,7 @@ function ChatBody({
   reads: Map<number, number>;
   reactions: Map<number, ReactionGroup[]>;
   userCache: Map<number, UserInfo>;
+  convMuted: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
@@ -590,17 +610,64 @@ function ChatBody({
     setPending((p) => p.filter((x) => x.localID !== localID));
   }
 
+  // Drag-and-drop: dropping files anywhere in the chat-window body
+  // routes them through the same upload flow as the paperclip.
+  const [dragOver, setDragOver] = useState(false);
+  function onDragOver(e: React.DragEvent<HTMLElement>) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }
+  function onDragLeave(e: React.DragEvent<HTMLElement>) {
+    if (e.currentTarget === e.target) setDragOver(false);
+  }
+  function onDrop(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      void handleFiles(e.dataTransfer.files);
+    }
+  }
+
+  // Paste handler — clipboard images go straight into the upload queue.
+  // Text pastes are left alone (caller's default paste behaviour).
+  function onPaste(e: React.ClipboardEvent<HTMLElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      void handleFiles(dt.files);
+    }
+  }
+
   function trySend() {
-    const body = draft.trim();
+    let body = draft.trim();
     if (uploading) return;
     // Editing path: send an edit instead of a new message.
     if (editing) {
       if (!body) return;
+      // Re-run slash expansion on edits too so users can /shrug a
+      // typo-fix into shape.
+      body = expandSlashCommand(body).body;
       sendEditOut(editing.id, body);
       cancelEdit();
       return;
     }
     if (!body && readyIDs.length === 0) return;
+    // Slash commands run before the network hop. Unrecognised ones
+    // pass through unchanged (handled=false).
+    if (body) body = expandSlashCommand(body).body;
     sendOut(
       body,
       readyIDs.length > 0 ? readyIDs : undefined,
@@ -632,7 +699,13 @@ function ChatBody({
   const subtitle = conversationSubtitle(conv, session.user.id);
 
   return (
-    <main className={`phase6 chat-window-app ${shaking ? "shaking" : ""}`}>
+    <main
+      className={`phase6 chat-window-app ${shaking ? "shaking" : ""} ${dragOver ? "drag-over" : ""}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onPaste={onPaste}
+    >
       <header className="chat-window-app-header">
         <div className="chat-window-titles">
           <span className="chat-window-title">{title}</span>
@@ -641,6 +714,16 @@ function ChatBody({
           )}
         </div>
         <div className="chat-window-buttons">
+          <button
+            type="button"
+            className="chat-window-button"
+            title={convMuted ? "Unmute conversation" : "Mute conversation"}
+            onClick={() =>
+              void emit(EVT.ToggleConvMute, { conversation_id: convID })
+            }
+          >
+            {convMuted ? "🔕" : "🔔"}
+          </button>
           <button
             type="button"
             className="chat-window-button"
@@ -1075,17 +1158,32 @@ function AttachmentRender({
   session: SessionSnapshot;
 }) {
   const url = fileURL(session.serverUrl, session.token, a.id);
+  const [lightbox, setLightbox] = useState(false);
   if (a.mime_type.startsWith("image/")) {
     return (
-      <a
-        className="msg-image-link"
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
-      >
-        <img className="msg-image" src={url} alt={a.filename} loading="lazy" />
-      </a>
+      <>
+        <button
+          type="button"
+          className="msg-image-link"
+          onClick={() => setLightbox(true)}
+          title={`${a.filename} (${formatBytes(a.size_bytes)})`}
+        >
+          <img
+            className="msg-image"
+            src={url}
+            alt={a.filename}
+            loading="lazy"
+            draggable={false}
+          />
+        </button>
+        {lightbox && (
+          <ImageLightbox
+            url={url}
+            alt={a.filename}
+            onClose={() => setLightbox(false)}
+          />
+        )}
+      </>
     );
   }
   return (
@@ -1094,6 +1192,38 @@ function AttachmentRender({
       <span className="msg-file-name">{a.filename}</span>
       <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
     </a>
+  );
+}
+
+// ImageLightbox — full-window image viewer for inline attachments.
+// Escape or click on the backdrop closes; click on the image itself
+// is absorbed so users don't accidentally dismiss while panning.
+function ImageLightbox({
+  url,
+  alt,
+  onClose,
+}: {
+  url: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="image-lightbox" onClick={onClose}>
+      <img
+        src={url}
+        alt={alt}
+        className="image-lightbox-img"
+        onClick={(e) => e.stopPropagation()}
+        draggable={false}
+      />
+    </div>
   );
 }
 

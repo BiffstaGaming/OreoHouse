@@ -248,6 +248,23 @@ export async function listMessages(
   return body.messages;
 }
 
+// searchMessages calls GET /api/search. q is the FTS5 query (the
+// user types it raw; the server passes it to MATCH). Returns matched
+// MessageViews newest first, scoped to convs the user is a member of.
+export async function searchMessages(
+  serverUrl: string,
+  token: string,
+  q: string,
+): Promise<MessageView[]> {
+  const url = new URL("/api/search", serverUrl);
+  url.searchParams.set("q", q);
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await parseResponse<{ results: MessageView[] }>(resp);
+  return body.results ?? [];
+}
+
 // setMyDisplayName PUTs /api/me/profile and returns the updated
 // UserInfo. Empty string clears the stored display name.
 export async function setMyDisplayName(

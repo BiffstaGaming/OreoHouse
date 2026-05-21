@@ -583,6 +583,25 @@ button:disabled {
   animation: shake 700ms cubic-bezier(.36, .07, .19, .97);
 }
 
+/* Drag-and-drop highlight when a file is hovered over the chat
+   window. The whole body gets a blue glow + dashed inset border. */
+.chat-window-app.drag-over::after {
+  content: "Drop to attach";
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--msn-blue);
+  border-radius: 8px;
+  background: rgba(74, 141, 232, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--msn-blue-dark);
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+.chat-window-app { position: relative; }
+
 .chat-window-app-header {
   display: flex;
   align-items: center;
@@ -991,6 +1010,71 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* --- Search modal --- */
+.search-modal {
+  width: min(40rem, 100%);
+}
+.search-input {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  font-size: 1rem;
+  border: 1px solid var(--msn-border);
+  border-radius: 4px;
+  background: white;
+  color: var(--msn-text);
+  margin-bottom: 0.6rem;
+}
+.search-input:focus {
+  outline: none;
+  border-color: var(--msn-blue-light);
+  box-shadow: 0 0 0 2px rgba(74, 141, 232, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .search-input {
+    background: #1a2233;
+    border-color: var(--msn-border);
+  }
+}
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.search-result {
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+  cursor: pointer;
+}
+.search-result:hover {
+  background: rgba(74, 141, 232, 0.08);
+}
+.search-result-meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--msn-text-muted);
+  margin-bottom: 0.2rem;
+}
+.search-result-conv {
+  font-weight: 600;
+  color: var(--msn-blue-dark);
+}
+.search-result-time {
+  margin-left: auto;
+}
+.search-result-body {
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- Reaction pills under message bubbles --- */
 .msg-reactions {
   display: flex;
@@ -1166,6 +1250,35 @@ button:disabled {
   max-height: 18rem;
   border-radius: 0.3rem;
   border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+/* Wrap the inline thumbnail in a borderless button so it's keyboard-
+   accessible without affecting visual styling. */
+.msg-image-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+/* Full-window lightbox shown on image click. Click the backdrop to
+   close; clicking the <img> is stopPropagation'd. */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  cursor: zoom-out;
+}
+.image-lightbox-img {
+  max-width: 96vw;
+  max-height: 96vh;
+  cursor: default;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
 }
 
 .msg-file {

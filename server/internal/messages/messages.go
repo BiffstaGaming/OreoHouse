@@ -305,6 +305,72 @@ func (s *Service) Since(ctx context.Context, conversationID, sinceID int64, limi
 	return scanMessages(rows)
 }
 
+// MaxSearchLimit caps how many results a single Search call returns.
+const MaxSearchLimit = 50
+
+// Search runs a full-text search against the body of every message
+// in conversations the userID is a member of. Results are newest-first
+// (by id). If convID > 0 the search is restricted to that one conv.
+//
+// query is passed to FTS5 verbatim — clients can use phrases ("...")
+// and column operators if they like.
+func (s *Service) Search(
+	ctx context.Context,
+	userID int64,
+	query string,
+	convID int64,
+	limit int,
+) ([]Message, error) {
+	if limit <= 0 || limit > MaxSearchLimit {
+		limit = MaxSearchLimit
+	}
+	if query == "" {
+		return nil, nil
+	}
+	// Membership-gated: JOIN onto conversation_members + filter by
+	// user_id, so the user can't search messages from conversations
+	// they're not in.
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if convID > 0 {
+		rows, err = s.db.QueryContext(ctx, `
+            SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+                   m.edited_at, m.deleted_at, m.reply_to_id
+              FROM messages_fts f
+              JOIN messages m ON m.id = f.rowid
+              JOIN conversation_members cm
+                ON cm.conversation_id = m.conversation_id
+             WHERE f.messages_fts MATCH ?
+               AND cm.user_id = ?
+               AND m.conversation_id = ?
+               AND m.deleted_at IS NULL
+          ORDER BY m.id DESC
+             LIMIT ?
+        `, query, userID, convID, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+            SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+                   m.edited_at, m.deleted_at, m.reply_to_id
+              FROM messages_fts f
+              JOIN messages m ON m.id = f.rowid
+              JOIN conversation_members cm
+                ON cm.conversation_id = m.conversation_id
+             WHERE f.messages_fts MATCH ?
+               AND cm.user_id = ?
+               AND m.deleted_at IS NULL
+          ORDER BY m.id DESC
+             LIMIT ?
+        `, query, userID, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
 func scanMessages(rows *sql.Rows) ([]Message, error) {
 	var out []Message
 	for rows.Next() {

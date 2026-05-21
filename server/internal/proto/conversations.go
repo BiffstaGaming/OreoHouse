@@ -109,3 +109,8 @@ type MessageView struct {
 type ListMessagesResponse struct {
 	Messages []MessageView `json:"messages"`
 }
+
+// SearchResponse is the body of GET /api/search.
+type SearchResponse struct {
+	Results []MessageView `json:"results"`
+}
