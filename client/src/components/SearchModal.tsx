@@ -102,33 +102,58 @@ export function SearchModal({
           {!loading && query.trim().length > 0 && results.length === 0 && !error && (
             <p className="empty">No matches.</p>
           )}
-          <ul className="search-results">
-            {results.map((m) => (
-              <li key={m.id}>
-                <button
-                  type="button"
-                  className="search-result"
-                  onClick={() => {
-                    onJump(m.conversation_id);
-                    onClose();
-                  }}
-                >
-                  <div className="search-result-meta">
-                    <span className="search-result-conv">
-                      {convLabel(m.conversation_id)}
-                    </span>
-                    <span className="search-result-sender">
-                      {displayNameOf(userCache.get(m.sender.id) ?? m.sender)}
-                    </span>
-                    <span className="search-result-time">
-                      {new Date(m.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="search-result-body">{m.body}</div>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {results.length > 0 && (
+            <ul className="search-results">
+              {results.map((m) => {
+                const q = query.trim().toLowerCase();
+                const bodyHit =
+                  m.body !== undefined &&
+                  m.body !== null &&
+                  m.body.toLowerCase().includes(q);
+                // A "filename hit" is anything matched purely on the
+                // attachment side — likely the case if the body
+                // doesn't contain the query but an attachment does.
+                const filenameHits = (m.attachments ?? []).filter((a) =>
+                  a.filename.toLowerCase().includes(q),
+                );
+                return (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      className="search-result"
+                      onClick={() => {
+                        onJump(m.conversation_id);
+                        onClose();
+                      }}
+                    >
+                      <div className="search-result-meta">
+                        <span className="search-result-conv">
+                          {convLabel(m.conversation_id)}
+                        </span>
+                        <span className="search-result-sender">
+                          {displayNameOf(userCache.get(m.sender.id) ?? m.sender)}
+                        </span>
+                        <span className="search-result-time">
+                          {new Date(m.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      {m.body && (
+                        <div className="search-result-body">{m.body}</div>
+                      )}
+                      {filenameHits.length > 0 && !bodyHit && (
+                        <div className="search-result-files">
+                          <span className="search-result-files-icon">📎</span>
+                          {filenameHits
+                            .map((a) => a.filename)
+                            .join(", ")}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       </div>
     </div>

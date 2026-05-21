@@ -972,29 +972,42 @@ button:disabled {
   font-style: italic;
   opacity: 0.55;
 }
+/* Teams-style reply block: sender name on top, quoted body below
+ * (clamped to ~3 lines), visually separated by a coloured left border
+ * and a tint. Sits directly above .msg-meta + .msg-body in the bubble. */
 .msg-quote {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.45rem;
-  margin-bottom: 0.3rem;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.55rem 0.4rem;
+  margin-bottom: 0.4rem;
   background: rgba(127, 127, 127, 0.1);
   border-left: 3px solid var(--msn-blue-light);
   border-radius: 0.25rem;
-  font-size: 0.78rem;
-  opacity: 0.85;
+  font-size: 0.8rem;
   overflow: hidden;
 }
 .msg-quote-arrow {
   opacity: 0.65;
+  margin-right: 0.1rem;
 }
 .msg-quote-sender {
   font-weight: 600;
+  color: var(--msn-blue-dark);
+  font-size: 0.78rem;
 }
 .msg-quote-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  opacity: 0.85;
+}
+.msg-quote-deleted {
+  font-style: italic;
+  opacity: 0.7;
 }
 
 /* Edit / delete toolbar buttons share msg-toolbar-btn styles; the
@@ -1037,6 +1050,10 @@ button:disabled {
   width: min(40rem, 100%);
 }
 .search-input {
+  /* box-sizing: border-box is essential here. Without it the input's
+   * computed width (100% + 1.4rem padding) overflows the modal body
+   * and a horizontal scrollbar appears the moment the modal opens. */
+  box-sizing: border-box;
   width: 100%;
   padding: 0.5rem 0.7rem;
   font-size: 1rem;
@@ -1095,6 +1112,161 @@ button:disabled {
   font-size: 0.88rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.search-result-files {
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--msn-text-muted);
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.search-result-files-icon {
+  opacity: 0.7;
+}
+
+/* --- Media + Links panel --- */
+.media-links-modal {
+  width: min(40rem, 100%);
+}
+.ml-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--msn-border);
+  padding: 0 0.6rem;
+  background: var(--msn-bg-soft);
+}
+.ml-tab {
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--msn-text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+.ml-tab:hover {
+  color: var(--msn-text);
+}
+.ml-tab-active {
+  color: var(--msn-blue-dark);
+  border-bottom-color: var(--msn-blue);
+}
+.ml-section-title {
+  margin: 0.4rem 0 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--msn-text-muted);
+  font-weight: 700;
+}
+.ml-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.ml-image-tile {
+  display: block;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border: 1px solid var(--msn-border);
+  border-radius: 0.4rem;
+  background: var(--msn-bg-soft);
+}
+.ml-image-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.18s;
+}
+.ml-image-tile:hover img {
+  transform: scale(1.04);
+}
+.ml-file-list,
+.ml-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.ml-file-row,
+.ml-link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 0.4rem;
+  text-decoration: none;
+  color: var(--msn-text);
+  background: var(--msn-bg-soft);
+}
+.ml-file-row:hover,
+.ml-link-row:hover {
+  background: rgba(74, 141, 232, 0.08);
+  border-color: var(--msn-blue-light);
+}
+.ml-file-icon {
+  font-size: 1.2rem;
+  opacity: 0.75;
+}
+.ml-file-meta,
+.ml-link-row {
+  min-width: 0;
+}
+.ml-file-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ml-file-name,
+.ml-link-url {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.ml-file-sub,
+.ml-link-sub {
+  color: var(--msn-text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-link-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.7rem;
+  row-gap: 0.1rem;
+}
+.ml-link-host {
+  grid-row: 1 / span 2;
+  align-self: center;
+  background: var(--msn-blue);
+  color: #fff;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.ml-link-url {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ml-link-sub {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 /* --- Reaction pills under message bubbles --- */
@@ -1396,6 +1568,10 @@ button:disabled {
 .modal-body {
   padding: 0.9rem;
   overflow-y: auto;
+  /* Defensive: clip any descendant that bleeds past the right edge
+   * (e.g. a child input with width:100% + padding that hasn't set
+   * box-sizing) so the modal never grows a horizontal scrollbar. */
+  overflow-x: hidden;
 }
 
 /* --- Forms (in modals) --- */

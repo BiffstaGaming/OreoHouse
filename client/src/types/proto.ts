@@ -435,3 +435,25 @@ export interface AttachmentView {
   image_width?: number;
   image_height?: number;
 }
+
+// One row in the per-conversation media gallery
+// (GET /api/conversations/{id}/media). The attachment + the message
+// it was sent in, plus uploader info so the UI can render a sender
+// chip.
+export interface MediaItem {
+  attachment: AttachmentView;
+  message_id: number;
+  sender: UserInfo;
+  created_at: string;
+}
+
+// One row in the per-conversation links view
+// (GET /api/conversations/{id}/links). A URL extracted from a message
+// body, plus enough context to jump back to the message.
+export interface LinkItem {
+  url: string;
+  message_id: number;
+  conversation_id: number;
+  sender: UserInfo;
+  created_at: string;
+}

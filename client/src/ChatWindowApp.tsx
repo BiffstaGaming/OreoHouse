@@ -44,6 +44,7 @@ import {
 } from "./lib/chatBridge";
 import { Avatar } from "./components/Avatar";
 import { EmojiPicker } from "./components/EmojiPicker";
+import { MediaLinksPanel } from "./components/MediaLinksPanel";
 import { QUICK_REACTIONS } from "./lib/emoji";
 import { expandSlashCommand } from "./lib/slashCommands";
 import { displayNameOf } from "./lib/users";
@@ -492,6 +493,7 @@ function ChatBody({
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [nudgeCooldown, setNudgeCooldown] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mediaPanelOpen, setMediaPanelOpen] = useState(false);
   // Editing state: when non-null, the composer replaces "send" with
   // "save edit" and operates on this message id instead of creating
   // a new one.
@@ -764,6 +766,14 @@ function ChatBody({
           <button
             type="button"
             className="chat-window-button"
+            title="Media &amp; links shared in this conversation"
+            onClick={() => setMediaPanelOpen(true)}
+          >
+            🖼️
+          </button>
+          <button
+            type="button"
+            className="chat-window-button"
             title={convMuted ? "Unmute conversation" : "Mute conversation"}
             onClick={() =>
               void emit(EVT.ToggleConvMute, { conversation_id: convID })
@@ -940,6 +950,15 @@ function ChatBody({
           {uploading ? "…" : editing ? "Save" : "Send"}
         </button>
       </form>
+      {mediaPanelOpen && (
+        <MediaLinksPanel
+          serverUrl={session.serverUrl}
+          token={session.token}
+          conversationID={convID}
+          userCache={userCache}
+          onClose={() => setMediaPanelOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -1199,9 +1218,11 @@ function ReadTicks({
   );
 }
 
-// ReplyQuote renders the small "↪ Alice: short preview…" header at
-// the top of a reply bubble. If the original was deleted the body is
-// suppressed and we just render the tomb-stoned hint.
+// ReplyQuote renders the quoted-message block above the reply body,
+// Teams-style: sender name on top, quoted content underneath, up to
+// three lines clamped with an ellipsis. The reply's own body renders
+// in .msg-body below; the visual separation comes from the left
+// border + slightly tinted background.
 function ReplyQuote({
   snippet,
   userCache,
@@ -1211,12 +1232,21 @@ function ReplyQuote({
 }) {
   const sender = userCache.get(snippet.sender.id) ?? snippet.sender;
   return (
-    <div className="msg-quote" title={snippet.deleted ? "Deleted message" : snippet.body}>
-      <span className="msg-quote-arrow">↪</span>
-      <span className="msg-quote-sender">{displayNameOf(sender)}</span>
-      <span className="msg-quote-body">
-        {snippet.deleted ? "(deleted message)" : truncate(snippet.body, 80)}
-      </span>
+    <div
+      className="msg-quote"
+      title={snippet.deleted ? "Deleted message" : snippet.body}
+    >
+      <div className="msg-quote-sender">
+        <span className="msg-quote-arrow">↪</span>{" "}
+        {displayNameOf(sender)}
+      </div>
+      <div className="msg-quote-body">
+        {snippet.deleted ? (
+          <span className="msg-quote-deleted">(deleted message)</span>
+        ) : (
+          snippet.body
+        )}
+      </div>
     </div>
   );
 }

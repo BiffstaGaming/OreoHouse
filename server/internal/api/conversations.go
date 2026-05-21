@@ -81,6 +81,8 @@ func (h *ConversationsHandler) Mount(r chi.Router) {
 		r.Post("/api/conversations/{id}/leave", h.leave)
 		r.Get("/api/conversations/{id}/messages", h.listMessages)
 		r.Get("/api/conversations/{id}/pins", h.listPins)
+		r.Get("/api/conversations/{id}/media", h.listMedia)
+		r.Get("/api/conversations/{id}/links", h.listLinks)
 		r.Get("/api/rooms", h.listRooms)
 		r.Post("/api/rooms/{id}/join", h.joinRoom)
 	})
@@ -255,6 +257,93 @@ func (h *ConversationsHandler) listPins(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	writeJSON(w, http.StatusOK, proto.ListPinsResponse{Pins: out})
+}
+
+// listMedia handles GET /api/conversations/{id}/media. Returns every
+// attachment linked to a non-deleted message in the conversation,
+// newest-first, hydrated with the sender + the original message id
+// so the client can jump back to context.
+func (h *ConversationsHandler) listMedia(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.requireMembership(w, r, convID, me.ID); err != nil {
+		return
+	}
+	limit := 200
+	if ls := r.URL.Query().Get("limit"); ls != "" {
+		if v, err := strconv.Atoi(ls); err == nil && v > 0 && v <= 500 {
+			limit = v
+		}
+	}
+	rows, err := h.attachments.ListForConversation(r.Context(), convID, limit)
+	if err != nil {
+		slog.Error("list media failed", "error", err, "conv_id", convID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	members, err := h.convs.Members(r.Context(), convID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Resolve each attachment's sender via the message it's linked to.
+	// We need uploader_id here, not message_id — uploads happen before
+	// the message exists, so uploader_id is the source of truth for
+	// "who shared this file."
+	out := make([]proto.MediaItem, 0, len(rows))
+	for _, a := range rows {
+		out = append(out, proto.MediaItem{
+			Attachment: attachmentToView(a),
+			MessageID:  a.MessageID,
+			Sender:     senderInfo(a.UploaderID, members),
+			CreatedAt:  a.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	writeJSON(w, http.StatusOK, proto.ListMediaResponse{Items: out})
+}
+
+// listLinks handles GET /api/conversations/{id}/links. Walks the
+// most recent N messages and extracts http(s) URLs from each body.
+func (h *ConversationsHandler) listLinks(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.requireMembership(w, r, convID, me.ID); err != nil {
+		return
+	}
+	limit := 500
+	if ls := r.URL.Query().Get("limit"); ls != "" {
+		if v, err := strconv.Atoi(ls); err == nil && v > 0 && v <= 1000 {
+			limit = v
+		}
+	}
+	links, err := h.messages.ListLinksInConversation(r.Context(), convID, limit)
+	if err != nil {
+		slog.Error("list links failed", "error", err, "conv_id", convID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	members, err := h.convs.Members(r.Context(), convID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]proto.LinkItem, 0, len(links))
+	for _, l := range links {
+		out = append(out, proto.LinkItem{
+			URL:            l.URL,
+			MessageID:      l.MessageID,
+			ConversationID: l.ConversationID,
+			Sender:         senderInfo(l.SenderID, members),
+			CreatedAt:      l.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, proto.ListLinksResponse{Items: out})
 }
 
 // buildReplySnippet — REST-side variant of the WS handler's helper.

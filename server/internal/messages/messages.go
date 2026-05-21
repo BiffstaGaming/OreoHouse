@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -308,12 +309,20 @@ func (s *Service) Since(ctx context.Context, conversationID, sinceID int64, limi
 // MaxSearchLimit caps how many results a single Search call returns.
 const MaxSearchLimit = 50
 
-// Search runs a full-text search against the body of every message
-// in conversations the userID is a member of. Results are newest-first
-// (by id). If convID > 0 the search is restricted to that one conv.
+// Search runs a full-text search across two surfaces:
 //
-// query is passed to FTS5 verbatim — clients can use phrases ("...")
-// and column operators if they like.
+//  1. Message bodies, via the messages_fts virtual table (FTS5).
+//  2. Attachment filenames, via a case-insensitive LIKE join on
+//     the attachments table.
+//
+// The two paths are UNIONed and ordered newest-first. Results are
+// gated by conversation_members.user_id, so a caller can't see hits
+// from convs they're not in. If convID > 0 the search is restricted
+// to that one conv.
+//
+// For the FTS path `query` is passed verbatim — callers can use
+// phrases ("...") or column operators if they like. For the filename
+// path the query is wrapped as `%query%` (case-insensitive).
 func (s *Service) Search(
 	ctx context.Context,
 	userID int64,
@@ -327,9 +336,11 @@ func (s *Service) Search(
 	if query == "" {
 		return nil, nil
 	}
-	// Membership-gated: JOIN onto conversation_members + filter by
-	// user_id, so the user can't search messages from conversations
-	// they're not in.
+	likePattern := "%" + strings.ToLower(query) + "%"
+
+	// Two parallel SELECTs, UNIONed and re-sorted. The FTS arm is
+	// driven by messages_fts MATCH; the filename arm joins
+	// attachments and does a lowercased LIKE.
 	var (
 		rows *sql.Rows
 		err  error
@@ -346,9 +357,20 @@ func (s *Service) Search(
                AND cm.user_id = ?
                AND m.conversation_id = ?
                AND m.deleted_at IS NULL
-          ORDER BY m.id DESC
+            UNION
+            SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+                   m.edited_at, m.deleted_at, m.reply_to_id
+              FROM messages m
+              JOIN attachments a ON a.message_id = m.id
+              JOIN conversation_members cm
+                ON cm.conversation_id = m.conversation_id
+             WHERE LOWER(a.filename) LIKE ?
+               AND cm.user_id = ?
+               AND m.conversation_id = ?
+               AND m.deleted_at IS NULL
+          ORDER BY id DESC
              LIMIT ?
-        `, query, userID, convID, limit)
+        `, query, userID, convID, likePattern, userID, convID, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
             SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
@@ -360,12 +382,22 @@ func (s *Service) Search(
              WHERE f.messages_fts MATCH ?
                AND cm.user_id = ?
                AND m.deleted_at IS NULL
-          ORDER BY m.id DESC
+            UNION
+            SELECT m.id, m.conversation_id, m.sender_id, m.body, m.created_at,
+                   m.edited_at, m.deleted_at, m.reply_to_id
+              FROM messages m
+              JOIN attachments a ON a.message_id = m.id
+              JOIN conversation_members cm
+                ON cm.conversation_id = m.conversation_id
+             WHERE LOWER(a.filename) LIKE ?
+               AND cm.user_id = ?
+               AND m.deleted_at IS NULL
+          ORDER BY id DESC
              LIMIT ?
-        `, query, userID, limit)
+        `, query, userID, likePattern, userID, limit)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("fts search: %w", err)
+		return nil, fmt.Errorf("search: %w", err)
 	}
 	defer rows.Close()
 	return scanMessages(rows)

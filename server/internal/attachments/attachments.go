@@ -304,6 +304,70 @@ func (s *Service) ListForMessages(ctx context.Context, messageIDs []int64) (map[
 	return out, rows.Err()
 }
 
+// ListForConversation returns every attachment linked to a message in
+// the given conversation, newest-first. Used by the per-conversation
+// media gallery. limit clamps the page size; 0 == no clamp (caller
+// should always pass something sensible).
+//
+// Membership is NOT checked here — callers (the REST handler) must
+// gate access. We just stream rows.
+func (s *Service) ListForConversation(
+	ctx context.Context,
+	conversationID int64,
+	limit int,
+) ([]Attachment, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT a.id, a.uploader_id, a.message_id, a.filename, a.mime_type,
+               a.size_bytes, a.image_width, a.image_height, a.storage_path,
+               a.created_at
+          FROM attachments a
+          JOIN messages m ON m.id = a.message_id
+         WHERE m.conversation_id = ?
+           AND m.deleted_at IS NULL
+      ORDER BY a.id DESC
+         LIMIT ?
+    `, conversationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying attachments by conversation: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Attachment, 0, 64)
+	for rows.Next() {
+		var (
+			a         Attachment
+			messageID sql.NullInt64
+			imgW      sql.NullInt64
+			imgH      sql.NullInt64
+			createdAt string
+		)
+		if err := rows.Scan(
+			&a.ID, &a.UploaderID, &messageID, &a.Filename, &a.MimeType,
+			&a.SizeBytes, &imgW, &imgH, &a.StoragePath, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if messageID.Valid {
+			a.MessageID = messageID.Int64
+		}
+		if imgW.Valid {
+			a.ImageWidth = int(imgW.Int64)
+		}
+		if imgH.Valid {
+			a.ImageHeight = int(imgH.Int64)
+		}
+		t, err := parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		a.CreatedAt = t
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func nullableInt(v int) any {
 	if v <= 0 {
 		return nil
