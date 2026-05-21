@@ -11,3 +11,28 @@ services:
       OREOHOUSE_ADDR: ":8080"
       OREOHOUSE_DATA_DIR: "/data"
     restart: unless-stopped
+
+  # Browser-based chat client for guest / no-install computers.
+  # See web/README.md for the full story. Talks to the oreohouse
+  # container over the Docker network for the PHP-side login proxy;
+  # the browser itself reaches the Go server directly on port 8080.
+  oreohouse-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    image: oreohouse-web:dev
+    container_name: oreohouse-web
+    ports:
+      - "80:80"
+    environment:
+      # Service-name URL used by PHP itself during the login proxy
+      # (server-to-server inside the Docker network).
+      OREO_SERVER_URL: "http://oreohouse:8080"
+      # Override only if your browser cannot resolve the same hostname
+      # the PHP container uses. Leaving it empty lets the page derive
+      # http://<request-host>:8080 at runtime, which is usually what
+      # you want.
+      OREO_BROWSER_SERVER_URL: ""
+    depends_on:
+      - oreohouse
+    restart: unless-stopped
