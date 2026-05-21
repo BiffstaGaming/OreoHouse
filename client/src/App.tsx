@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 
 import {
@@ -42,15 +43,24 @@ type Session = {
   user: UserInfo;
 };
 
-type View =
-  | { kind: "empty" }
-  | { kind: "chat"; conversationID: number }
-  | { kind: "newGroup" }
-  | { kind: "newRoom" }
-  | { kind: "browseRooms" };
+type ChatWindowState = {
+  position: { x: number; y: number };
+  minimized: boolean;
+  zIndex: number;
+};
+
+type PendingAttachment =
+  | { kind: "uploading"; localID: string; filename: string }
+  | { kind: "ready"; localID: string; view: AttachmentView }
+  | { kind: "error"; localID: string; filename: string; error: string };
+
+type ModalKind = "newGroup" | "newRoom" | "browseRooms";
 
 const DEFAULT_SERVER_URL = "http://localhost:8080";
 const HISTORY_PAGE_SIZE = 50;
+const WINDOW_SPAWN_BASE = { x: 90, y: 70 };
+const WINDOW_DEFAULT_SIZE = { w: 380, h: 460 };
+const WINDOW_MIN_VISIBLE = 80; // keep at least this many px on-screen when dragging
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -60,6 +70,10 @@ export default function App() {
   }
   return <ChatScreen session={session} onSignOut={() => setSession(null)} />;
 }
+
+// ---------------------------------------------------------------------
+// Login screen
+// ---------------------------------------------------------------------
 
 function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
@@ -84,7 +98,7 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
   }
 
   return (
-    <main className="phase4 login-screen">
+    <main className="phase6 login-screen">
       <h1>OreoHouse</h1>
       <p className="subtitle">Sign in to your family server.</p>
       <form className="login-form" onSubmit={handleSubmit}>
@@ -125,6 +139,10 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
   );
 }
 
+// ---------------------------------------------------------------------
+// Chat screen — top-level container
+// ---------------------------------------------------------------------
+
 function ChatScreen({
   session,
   onSignOut,
@@ -140,9 +158,21 @@ function ChatScreen({
   const [messages, setMessages] = useState<Map<number, MessageView[]>>(
     new Map(),
   );
-  const [view, setView] = useState<View>({ kind: "empty" });
+  const [openWindows, setOpenWindows] = useState<Map<number, ChatWindowState>>(
+    new Map(),
+  );
+  const [topZ, setTopZ] = useState(10);
+  const [unreadByConv, setUnreadByConv] = useState<Map<number, number>>(
+    new Map(),
+  );
+  const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
+
+  // Refs mirroring the latest state so handleServerMessage (set once in
+  // the connect call) can see the current open-windows map.
+  const openWindowsRef = useRef(openWindows);
+  openWindowsRef.current = openWindows;
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -206,7 +236,7 @@ function ChatScreen({
       case "conversation_members_changed":
         setConversations((prev) => {
           const existing = prev.get(msg.conversation_id);
-          if (!existing) return prev; // fire-and-forget; we don't have the conv yet
+          if (!existing) return prev;
           const out = new Map(prev);
           out.set(msg.conversation_id, { ...existing, members: msg.members });
           return out;
@@ -227,6 +257,7 @@ function ChatScreen({
       sender: m.sender,
       body: m.body,
       created_at: m.created_at,
+      attachments: m.attachments,
     };
     setMessages((prev) => {
       const existing = prev.get(m.conversation_id) ?? [];
@@ -241,6 +272,19 @@ function ChatScreen({
       void refreshConversations();
       return prev;
     });
+
+    // Unread counter: only if my own message? Skip; otherwise if the
+    // window for this conv isn't open AND focused, bump the counter.
+    if (m.sender.id === session.user.id) return;
+    const w = openWindowsRef.current.get(m.conversation_id);
+    const focused = w && !w.minimized && w.zIndex === topZ;
+    if (!focused) {
+      setUnreadByConv((prev) => {
+        const out = new Map(prev);
+        out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
+        return out;
+      });
+    }
   }
 
   async function ensureHistory(convID: number) {
@@ -272,27 +316,108 @@ function ChatScreen({
     }
   }
 
-  function openConversation(id: number) {
-    setView({ kind: "chat", conversationID: id });
-    void ensureHistory(id);
+  function openConvWindow(convID: number) {
+    setOpenWindows((prev) => {
+      const existing = prev.get(convID);
+      const newZ = topZ + 1;
+      const out = new Map(prev);
+      if (existing) {
+        out.set(convID, { ...existing, minimized: false, zIndex: newZ });
+      } else {
+        const offset = (prev.size % 6) * 28;
+        out.set(convID, {
+          position: {
+            x: WINDOW_SPAWN_BASE.x + offset,
+            y: WINDOW_SPAWN_BASE.y + offset,
+          },
+          minimized: false,
+          zIndex: newZ,
+        });
+      }
+      return out;
+    });
+    setTopZ((z) => z + 1);
+    setUnreadByConv((prev) => {
+      if (!prev.has(convID)) return prev;
+      const out = new Map(prev);
+      out.delete(convID);
+      return out;
+    });
+    void ensureHistory(convID);
   }
 
-  async function openDMWith(user: UserInfo) {
+  function closeConvWindow(convID: number) {
+    setOpenWindows((prev) => {
+      const out = new Map(prev);
+      out.delete(convID);
+      return out;
+    });
+  }
+
+  function minimizeConvWindow(convID: number) {
+    setOpenWindows((prev) => {
+      const w = prev.get(convID);
+      if (!w) return prev;
+      const out = new Map(prev);
+      out.set(convID, { ...w, minimized: true });
+      return out;
+    });
+  }
+
+  function setConvWindowPos(convID: number, pos: { x: number; y: number }) {
+    setOpenWindows((prev) => {
+      const w = prev.get(convID);
+      if (!w) return prev;
+      const out = new Map(prev);
+      out.set(convID, { ...w, position: pos });
+      return out;
+    });
+  }
+
+  function bringToFront(convID: number) {
+    setOpenWindows((prev) => {
+      const w = prev.get(convID);
+      if (!w) return prev;
+      if (w.zIndex === topZ) return prev;
+      const out = new Map(prev);
+      out.set(convID, { ...w, zIndex: topZ + 1 });
+      return out;
+    });
+    setTopZ((z) => z + 1);
+    setUnreadByConv((prev) => {
+      if (!prev.has(convID)) return prev;
+      const out = new Map(prev);
+      out.delete(convID);
+      return out;
+    });
+  }
+
+  async function openChatWithUser(user: UserInfo) {
     if (user.id === session.user.id) return;
+    for (const c of conversations.values()) {
+      if (c.type === "dm" && c.members.some((m) => m.id === user.id)) {
+        openConvWindow(c.id);
+        return;
+      }
+    }
     try {
       const conv = await createDM(session.serverUrl, session.token, user.id);
       setConversations((prev) => new Map(prev).set(conv.id, conv));
-      openConversation(conv.id);
+      openConvWindow(conv.id);
     } catch (err) {
       console.error("createDM failed:", err);
     }
   }
 
-  function sendMessage(body: string, attachmentIDs?: number[]) {
-    if (view.kind !== "chat" || !wsRef.current) return;
+  function sendMessage(
+    convID: number,
+    body: string,
+    attachmentIDs?: number[],
+  ) {
+    if (!wsRef.current) return;
     wsRef.current.send({
       type: "message",
-      conversation_id: view.conversationID,
+      conversation_id: convID,
       body,
       attachment_ids: attachmentIDs,
     });
@@ -311,7 +436,7 @@ function ChatScreen({
         out.delete(conv.id);
         return out;
       });
-      setView({ kind: "empty" });
+      closeConvWindow(conv.id);
     } catch (err) {
       console.error("leave failed:", err);
     }
@@ -323,20 +448,23 @@ function ChatScreen({
     onSignOut();
   }
 
-  const selectedConv =
-    view.kind === "chat" ? conversations.get(view.conversationID) ?? null : null;
-  const selectedMessages = useMemo(
+  const openWindowEntries = useMemo(
     () =>
-      view.kind === "chat" ? messages.get(view.conversationID) ?? [] : [],
-    [view, messages],
+      Array.from(openWindows.entries()).filter(
+        ([id, w]) => !w.minimized && conversations.has(id),
+      ),
+    [openWindows, conversations],
   );
-  const sortedConvs = useMemo(
-    () => sortConversations(Array.from(conversations.values())),
-    [conversations],
+  const minimizedEntries = useMemo(
+    () =>
+      Array.from(openWindows.entries()).filter(
+        ([id, w]) => w.minimized && conversations.has(id),
+      ),
+    [openWindows, conversations],
   );
 
   return (
-    <main className="phase4 chat-screen">
+    <main className="phase6 chat-screen">
       <header className="topbar">
         <div className="me">
           <strong>{session.user.username}</strong>
@@ -347,72 +475,220 @@ function ChatScreen({
         </button>
       </header>
 
-      <div className="panes">
-        <LeftPane
-          self={session.user}
-          conversations={sortedConvs}
-          online={online}
-          view={view}
-          onNewGroup={() => setView({ kind: "newGroup" })}
-          onNewRoom={() => setView({ kind: "newRoom" })}
-          onBrowseRooms={() => setView({ kind: "browseRooms" })}
-          onPickConv={openConversation}
-          onPickUser={openDMWith}
-        />
-        <RightPane
-          session={session}
-          view={view}
-          conversation={selectedConv}
-          messages={selectedMessages}
-          online={online}
-          onSend={sendMessage}
-          onLeave={handleLeave}
-          onCancelForm={() => setView({ kind: "empty" })}
-          onGroupCreated={(c) => {
-            setConversations((prev) => new Map(prev).set(c.id, c));
-            openConversation(c.id);
-          }}
-          onRoomCreated={(c) => {
-            setConversations((prev) => new Map(prev).set(c.id, c));
-            openConversation(c.id);
-          }}
-          onRoomJoined={(c) => {
-            setConversations((prev) => new Map(prev).set(c.id, c));
-            openConversation(c.id);
-          }}
-        />
+      <ContactList
+        self={session.user}
+        online={online}
+        conversations={conversations}
+        unreadByConv={unreadByConv}
+        onPickUser={openChatWithUser}
+        onPickConv={openConvWindow}
+        onNewGroup={() => setModal("newGroup")}
+        onNewRoom={() => setModal("newRoom")}
+        onBrowseRooms={() => setModal("browseRooms")}
+      />
+
+      <div className="windows-layer">
+        {openWindowEntries.map(([convID, state]) => {
+          const conv = conversations.get(convID)!;
+          return (
+            <ChatWindow
+              key={convID}
+              session={session}
+              conv={conv}
+              state={state}
+              messages={messages.get(convID) ?? []}
+              onMove={(p) => setConvWindowPos(convID, p)}
+              onClose={() => closeConvWindow(convID)}
+              onMinimize={() => minimizeConvWindow(convID)}
+              onFocus={() => bringToFront(convID)}
+              onSend={(body, atts) => sendMessage(convID, body, atts)}
+              onLeave={() => handleLeave(conv)}
+            />
+          );
+        })}
       </div>
+
+      {minimizedEntries.length > 0 && (
+        <div className="minimized-bar">
+          {minimizedEntries.map(([convID]) => {
+            const conv = conversations.get(convID)!;
+            return (
+              <MinimizedChip
+                key={convID}
+                conv={conv}
+                self={session.user}
+                unread={unreadByConv.get(convID) ?? 0}
+                onRestore={() => openConvWindow(convID)}
+                onClose={() => closeConvWindow(convID)}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {modal === "newGroup" && (
+        <Modal title="New group" onClose={() => setModal(null)}>
+          <NewGroupForm
+            session={session}
+            self={session.user}
+            online={online}
+            onCreated={(c) => {
+              setConversations((prev) => new Map(prev).set(c.id, c));
+              setModal(null);
+              openConvWindow(c.id);
+            }}
+            onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal === "newRoom" && (
+        <Modal title="New room" onClose={() => setModal(null)}>
+          <NewRoomForm
+            session={session}
+            onCreated={(c) => {
+              setConversations((prev) => new Map(prev).set(c.id, c));
+              setModal(null);
+              openConvWindow(c.id);
+            }}
+            onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal === "browseRooms" && (
+        <Modal title="Browse rooms" onClose={() => setModal(null)}>
+          <BrowseRoomsView
+            session={session}
+            onJoined={(c) => {
+              setConversations((prev) => new Map(prev).set(c.id, c));
+              setModal(null);
+              openConvWindow(c.id);
+            }}
+            onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
     </main>
   );
 }
 
-// --- Left pane --------------------------------------------------------
+// ---------------------------------------------------------------------
+// Contact list — primary view
+// ---------------------------------------------------------------------
 
-function LeftPane({
+function ContactList({
   self,
-  conversations,
   online,
-  view,
+  conversations,
+  unreadByConv,
+  onPickUser,
+  onPickConv,
   onNewGroup,
   onNewRoom,
   onBrowseRooms,
-  onPickConv,
-  onPickUser,
 }: {
   self: UserInfo;
-  conversations: ConversationView[];
   online: UserInfo[];
-  view: View;
+  conversations: Map<number, ConversationView>;
+  unreadByConv: Map<number, number>;
+  onPickUser: (u: UserInfo) => void;
+  onPickConv: (convID: number) => void;
   onNewGroup: () => void;
   onNewRoom: () => void;
   onBrowseRooms: () => void;
-  onPickConv: (id: number) => void;
-  onPickUser: (u: UserInfo) => void;
 }) {
-  const selectedConvID = view.kind === "chat" ? view.conversationID : null;
+  const onlineIDs = new Set(online.map((u) => u.id));
+
+  // Map every DM partner -> their UserInfo (lifted from conversation
+  // membership), and the corresponding conversation id so we can route
+  // unread badges correctly.
+  const dmContactMap = new Map<number, UserInfo>();
+  const dmConvByUser = new Map<number, ConversationView>();
+  for (const c of conversations.values()) {
+    if (c.type !== "dm") continue;
+    const other = c.members.find((m) => m.id !== self.id);
+    if (!other) continue;
+    dmContactMap.set(other.id, other);
+    dmConvByUser.set(other.id, c);
+  }
+
+  const onlineOthers = sortByUsername(
+    online.filter((u) => u.id !== self.id),
+  );
+  const offlineContacts = sortByUsername(
+    Array.from(dmContactMap.values()).filter((u) => !onlineIDs.has(u.id)),
+  );
+  const groupsAndRooms = sortConversations(
+    Array.from(conversations.values()).filter((c) => c.type !== "dm"),
+  );
+
+  function unreadForUser(u: UserInfo): number {
+    const conv = dmConvByUser.get(u.id);
+    if (!conv) return 0;
+    return unreadByConv.get(conv.id) ?? 0;
+  }
 
   return (
-    <aside className="pane left-pane">
+    <aside className="contact-list">
+      <section>
+        <h2>
+          Online — <span className="count">{onlineOthers.length}</span>
+        </h2>
+        {onlineOthers.length === 0 ? (
+          <p className="empty">Nobody else is here.</p>
+        ) : (
+          <ul>
+            {onlineOthers.map((u) => (
+              <ContactRow
+                key={u.id}
+                user={u}
+                online
+                unread={unreadForUser(u)}
+                onClick={() => onPickUser(u)}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {offlineContacts.length > 0 && (
+        <section>
+          <h2>
+            Offline — <span className="count">{offlineContacts.length}</span>
+          </h2>
+          <ul>
+            {offlineContacts.map((u) => (
+              <ContactRow
+                key={u.id}
+                user={u}
+                online={false}
+                unread={unreadForUser(u)}
+                onClick={() => onPickUser(u)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {groupsAndRooms.length > 0 && (
+        <section>
+          <h2>
+            Groups & Rooms —{" "}
+            <span className="count">{groupsAndRooms.length}</span>
+          </h2>
+          <ul>
+            {groupsAndRooms.map((c) => (
+              <ConvRow
+                key={c.id}
+                conv={c}
+                self={self}
+                unread={unreadByConv.get(c.id) ?? 0}
+                onClick={() => onPickConv(c.id)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="actions">
         <button type="button" onClick={onNewGroup}>
           + Group
@@ -424,179 +700,140 @@ function LeftPane({
           Browse Rooms
         </button>
       </div>
-
-      <h2>Conversations</h2>
-      {conversations.length === 0 ? (
-        <p className="empty">No conversations yet.</p>
-      ) : (
-        <ul className="conv-list">
-          {conversations.map((c) => {
-            const isSelected = c.id === selectedConvID;
-            return (
-              <li key={c.id} className={isSelected ? "selected" : ""}>
-                <button
-                  type="button"
-                  className="conv-row"
-                  onClick={() => onPickConv(c.id)}
-                >
-                  <span className="conv-icon">{conversationIcon(c)}</span>
-                  <span className="conv-title">
-                    {conversationTitle(c, self.id)}
-                  </span>
-                  {c.type !== "dm" && (
-                    <span className="badge">{c.members.length}</span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      <h2 className="online-heading">
-        Online — <span className="count">{online.length}</span>
-      </h2>
-      {online.length === 0 ? (
-        <p className="empty">Nobody else is here.</p>
-      ) : (
-        <ul className="presence-list">
-          {online.map((u) => {
-            const isSelf = u.id === self.id;
-            return (
-              <li key={u.id} className={isSelf ? "self" : ""}>
-                <button
-                  type="button"
-                  className="presence-row"
-                  onClick={() => onPickUser(u)}
-                  disabled={isSelf}
-                  title={isSelf ? "you" : `open DM with ${u.username}`}
-                >
-                  <span className="dot" />
-                  <span className="username">{u.username}</span>
-                  {isSelf && <span className="badge">you</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
     </aside>
   );
 }
 
-// --- Right pane (dispatcher) ------------------------------------------
-
-function RightPane(props: {
-  session: Session;
-  view: View;
-  conversation: ConversationView | null;
-  messages: MessageView[];
-  online: UserInfo[];
-  onSend: (body: string, attachmentIDs?: number[]) => void;
-  onLeave: (c: ConversationView) => void;
-  onCancelForm: () => void;
-  onGroupCreated: (c: ConversationView) => void;
-  onRoomCreated: (c: ConversationView) => void;
-  onRoomJoined: (c: ConversationView) => void;
+function ContactRow({
+  user,
+  online,
+  unread,
+  onClick,
+}: {
+  user: UserInfo;
+  online: boolean;
+  unread: number;
+  onClick: () => void;
 }) {
-  switch (props.view.kind) {
-    case "chat":
-      return (
-        <ChatView
-          session={props.session}
-          conv={props.conversation}
-          messages={props.messages}
-          onSend={props.onSend}
-          onLeave={props.onLeave}
-        />
-      );
-    case "newGroup":
-      return (
-        <NewGroupForm
-          session={props.session}
-          self={props.session.user}
-          online={props.online}
-          onCreated={props.onGroupCreated}
-          onCancel={props.onCancelForm}
-        />
-      );
-    case "newRoom":
-      return (
-        <NewRoomForm
-          session={props.session}
-          onCreated={props.onRoomCreated}
-          onCancel={props.onCancelForm}
-        />
-      );
-    case "browseRooms":
-      return (
-        <BrowseRoomsView
-          session={props.session}
-          onJoined={props.onRoomJoined}
-          onCancel={props.onCancelForm}
-        />
-      );
-    case "empty":
-      return (
-        <section className="pane chat-pane chat-pane-empty">
-          <p>Pick a conversation on the left, or start a new one.</p>
-        </section>
-      );
-  }
+  return (
+    <li>
+      <button type="button" className="contact-row" onClick={onClick}>
+        <span className={`dot ${online ? "dot-online" : "dot-offline"}`} />
+        <span className="contact-name">{user.username}</span>
+        {unread > 0 && <span className="unread-badge">{unread}</span>}
+      </button>
+    </li>
+  );
 }
 
-// --- Chat view --------------------------------------------------------
+function ConvRow({
+  conv,
+  self,
+  unread,
+  onClick,
+}: {
+  conv: ConversationView;
+  self: UserInfo;
+  unread: number;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button type="button" className="contact-row" onClick={onClick}>
+        <span className="conv-icon">{conversationIcon(conv)}</span>
+        <span className="contact-name">{conversationTitle(conv, self.id)}</span>
+        <span className="meta">{conv.members.length}</span>
+        {unread > 0 && <span className="unread-badge">{unread}</span>}
+      </button>
+    </li>
+  );
+}
 
-type PendingAttachment =
-  | { kind: "uploading"; localID: string; filename: string }
-  | { kind: "ready"; localID: string; view: AttachmentView }
-  | { kind: "error"; localID: string; filename: string; error: string };
+// ---------------------------------------------------------------------
+// Chat window — floating, draggable, minimizable
+// ---------------------------------------------------------------------
 
-function ChatView({
+function ChatWindow({
   session,
   conv,
+  state,
   messages,
+  onMove,
+  onClose,
+  onMinimize,
+  onFocus,
   onSend,
   onLeave,
 }: {
   session: Session;
-  conv: ConversationView | null;
+  conv: ConversationView;
+  state: ChatWindowState;
   messages: MessageView[];
+  onMove: (pos: { x: number; y: number }) => void;
+  onClose: () => void;
+  onMinimize: () => void;
+  onFocus: () => void;
   onSend: (body: string, attachmentIDs?: number[]) => void;
-  onLeave: (c: ConversationView) => void;
+  onLeave: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef({ startX: 0, startY: 0, startPosX: 0, startPosY: 0 });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset draft + pending when switching conversations so attachments
-  // staged in one chat don't leak to another.
-  useEffect(() => {
-    setDraft("");
-    setPending([]);
-  }, [conv?.id]);
-
+  // Scroll to bottom whenever new messages arrive in this window.
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, conv?.id]);
+  }, [messages]);
 
-  if (!conv) {
-    return (
-      <section className="pane chat-pane chat-pane-empty">
-        <p>Conversation not found.</p>
-      </section>
-    );
+  // Drag — attach document-level listeners only while dragging.
+  useEffect(() => {
+    if (!isDragging) return;
+    function onMouseMove(e: MouseEvent) {
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      const maxX = window.innerWidth - WINDOW_MIN_VISIBLE;
+      const maxY = window.innerHeight - WINDOW_MIN_VISIBLE;
+      const nextX = clamp(dragRef.current.startPosX + dx, 0, maxX);
+      const nextY = clamp(dragRef.current.startPosY + dy, 0, maxY);
+      onMove({ x: nextX, y: nextY });
+    }
+    function onMouseUp() {
+      setIsDragging(false);
+    }
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isDragging, onMove]);
+
+  function startDrag(e: ReactMouseEvent) {
+    // Only react to left-button drags on the bare header (not on
+    // buttons inside it).
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPosX: state.position.x,
+      startPosY: state.position.y,
+    };
+    setIsDragging(true);
+    onFocus();
   }
-
-  const self = session.user;
-  const title = conversationTitle(conv, self.id);
-  const subtitle = conversationSubtitle(conv, self.id);
 
   const uploading = pending.some((p) => p.kind === "uploading");
   const readyIDs = pending
-    .filter((p): p is { kind: "ready"; localID: string; view: AttachmentView } => p.kind === "ready")
+    .filter(
+      (p): p is { kind: "ready"; localID: string; view: AttachmentView } =>
+        p.kind === "ready",
+    )
     .map((p) => p.view.id);
 
   async function handleFiles(files: FileList) {
@@ -637,10 +874,9 @@ function ChatView({
   function trySend() {
     const body = draft.trim();
     if (!body && readyIDs.length === 0) return;
-    if (uploading) return; // wait for uploads
+    if (uploading) return;
     onSend(body, readyIDs.length > 0 ? readyIDs : undefined);
     setDraft("");
-    // Clear ready+error; uploads in-flight (if any) stay.
     setPending((p) => p.filter((x) => x.kind === "uploading"));
   }
 
@@ -651,24 +887,61 @@ function ChatView({
     }
   }
 
+  const title = conversationTitle(conv, session.user.id);
+  const subtitle = conversationSubtitle(conv, session.user.id);
+
   return (
-    <section className="pane chat-pane">
-      <header className="chat-header">
-        <div>
-          <h2>{title}</h2>
-          {subtitle && <p className="chat-subtitle">{subtitle}</p>}
+    <section
+      className="chat-window"
+      style={{
+        left: state.position.x,
+        top: state.position.y,
+        width: WINDOW_DEFAULT_SIZE.w,
+        height: WINDOW_DEFAULT_SIZE.h,
+        zIndex: state.zIndex,
+      }}
+      onMouseDown={onFocus}
+    >
+      <header
+        className={`chat-window-header ${isDragging ? "dragging" : ""}`}
+        onMouseDown={startDrag}
+      >
+        <div className="chat-window-titles">
+          <span className="chat-window-title">{title}</span>
+          {subtitle && (
+            <span className="chat-window-subtitle">{subtitle}</span>
+          )}
         </div>
-        {conv.type !== "dm" && (
+        <div className="chat-window-buttons">
+          {conv.type !== "dm" && (
+            <button
+              type="button"
+              className="chat-window-button danger"
+              title={`Leave ${title}`}
+              onClick={() => {
+                if (confirm(`Leave ${title}?`)) onLeave();
+              }}
+            >
+              Leave
+            </button>
+          )}
           <button
             type="button"
-            className="danger"
-            onClick={() => {
-              if (confirm(`Leave ${title}?`)) onLeave(conv);
-            }}
+            className="chat-window-button"
+            title="Minimize"
+            onClick={onMinimize}
           >
-            Leave
+            _
           </button>
-        )}
+          <button
+            type="button"
+            className="chat-window-button"
+            title="Close"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
       </header>
       <div className="chat-thread" ref={scrollRef}>
         {messages.length === 0 ? (
@@ -705,7 +978,7 @@ function ChatView({
           onChange={(e) => {
             if (e.target.files) {
               void handleFiles(e.target.files);
-              e.target.value = ""; // allow re-picking same file
+              e.target.value = "";
             }
           }}
         />
@@ -729,10 +1002,109 @@ function ChatView({
           type="submit"
           disabled={uploading || (!draft.trim() && readyIDs.length === 0)}
         >
-          {uploading ? "Uploading…" : "Send"}
+          {uploading ? "…" : "Send"}
         </button>
       </form>
     </section>
+  );
+}
+
+function MinimizedChip({
+  conv,
+  self,
+  unread,
+  onRestore,
+  onClose,
+}: {
+  conv: ConversationView;
+  self: UserInfo;
+  unread: number;
+  onRestore: () => void;
+  onClose: () => void;
+}) {
+  const title = conversationTitle(conv, self.id);
+  return (
+    <div className="min-chip">
+      <button
+        type="button"
+        className="min-chip-restore"
+        onClick={onRestore}
+        title={`Restore ${title}`}
+      >
+        <span className="conv-icon">{conversationIcon(conv)}</span>
+        <span className="min-chip-title">{title}</span>
+        {unread > 0 && <span className="unread-badge">{unread}</span>}
+      </button>
+      <button
+        type="button"
+        className="min-chip-close"
+        onClick={onClose}
+        title="Close"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function MessageRow({
+  m,
+  session,
+}: {
+  m: MessageView;
+  session: Session;
+}) {
+  const mine = m.sender.id === session.user.id;
+  return (
+    <div className={`msg ${mine ? "msg-mine" : ""}`}>
+      <div className="msg-meta">
+        <span className="msg-sender">{mine ? "you" : m.sender.username}</span>
+        <span className="msg-time">{formatTime(m.created_at)}</span>
+      </div>
+      {m.body && <div className="msg-body">{m.body}</div>}
+      {m.attachments && m.attachments.length > 0 && (
+        <div className="msg-attachments">
+          {m.attachments.map((a) => (
+            <AttachmentRender key={a.id} a={a} session={session} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttachmentRender({
+  a,
+  session,
+}: {
+  a: AttachmentView;
+  session: Session;
+}) {
+  const url = fileURL(session.serverUrl, session.token, a.id);
+  if (a.mime_type.startsWith("image/")) {
+    return (
+      <a
+        className="msg-image-link"
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
+      >
+        <img className="msg-image" src={url} alt={a.filename} loading="lazy" />
+      </a>
+    );
+  }
+  return (
+    <a
+      className="msg-file"
+      href={url}
+      download={a.filename}
+      title={a.filename}
+    >
+      <span className="msg-file-icon">📎</span>
+      <span className="msg-file-name">{a.filename}</span>
+      <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
+    </a>
   );
 }
 
@@ -769,91 +1141,42 @@ function PendingChip({
   );
 }
 
-function MessageRow({
-  m,
-  session,
+// ---------------------------------------------------------------------
+// Modals — for create-group / create-room / browse-rooms
+// ---------------------------------------------------------------------
+
+function Modal({
+  title,
+  onClose,
+  children,
 }: {
-  m: MessageView;
-  session: Session;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
 }) {
-  const mine = m.sender.id === session.user.id;
+  // Close on Escape.
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div className={`msg ${mine ? "msg-mine" : ""}`}>
-      <div className="msg-meta">
-        <span className="msg-sender">
-          {mine ? "you" : m.sender.username}
-        </span>
-        <span className="msg-time">{formatTime(m.created_at)}</span>
+    <div className="modal-overlay" onMouseDown={onClose}>
+      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+        <header className="modal-header">
+          <h2>{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
       </div>
-      {m.body && <div className="msg-body">{m.body}</div>}
-      {m.attachments && m.attachments.length > 0 && (
-        <div className="msg-attachments">
-          {m.attachments.map((a) => (
-            <AttachmentRender key={a.id} a={a} session={session} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
-
-function AttachmentRender({
-  a,
-  session,
-}: {
-  a: AttachmentView;
-  session: Session;
-}) {
-  const url = fileURL(session.serverUrl, session.token, a.id);
-  if (a.mime_type.startsWith("image/")) {
-    return (
-      <a
-        className="msg-image-link"
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
-      >
-        <img
-          className="msg-image"
-          src={url}
-          alt={a.filename}
-          loading="lazy"
-        />
-      </a>
-    );
-  }
-  return (
-    <a
-      className="msg-file"
-      href={url}
-      download={a.filename}
-      title={a.filename}
-    >
-      <span className="msg-file-icon">📎</span>
-      <span className="msg-file-name">{a.filename}</span>
-      <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
-    </a>
-  );
-}
-
-function cryptoRandomID(): string {
-  // crypto.randomUUID exists in modern WebViews; fall back to a
-  // counter-ish string otherwise.
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-// --- New Group form ---------------------------------------------------
 
 function NewGroupForm({
   session,
@@ -872,7 +1195,6 @@ function NewGroupForm({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
   const invitable = online.filter((u) => u.id !== self.id);
 
   function toggle(id: number) {
@@ -908,58 +1230,51 @@ function NewGroupForm({
   }
 
   return (
-    <section className="pane form-pane">
-      <header className="form-header">
-        <h2>New group</h2>
+    <form onSubmit={submit} className="form">
+      <label>
+        Name <span className="hint">(optional)</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={64}
+          placeholder="Family chat"
+        />
+      </label>
+      <fieldset className="member-picker">
+        <legend>Invite</legend>
+        {invitable.length === 0 ? (
+          <p className="empty">
+            Nobody else is online right now. Wait for someone to sign in.
+          </p>
+        ) : (
+          <ul>
+            {invitable.map((u) => (
+              <li key={u.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(u.id)}
+                    onChange={() => toggle(u.id)}
+                  />
+                  {u.username}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </fieldset>
+      {error && <div className="error">{error}</div>}
+      <div className="form-actions">
         <button type="button" onClick={onCancel}>
           Cancel
         </button>
-      </header>
-      <form onSubmit={submit} className="form">
-        <label>
-          Name <span className="hint">(optional)</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={64}
-            placeholder="Family chat"
-          />
-        </label>
-        <fieldset className="member-picker">
-          <legend>Invite</legend>
-          {invitable.length === 0 ? (
-            <p className="empty">
-              Nobody else is online right now. Wait for someone to sign in.
-            </p>
-          ) : (
-            <ul>
-              {invitable.map((u) => (
-                <li key={u.id}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(u.id)}
-                      onChange={() => toggle(u.id)}
-                    />
-                    {u.username}
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-        </fieldset>
-        {error && <div className="error">{error}</div>}
-        <div className="form-actions">
-          <button type="submit" disabled={busy || selected.size === 0}>
-            {busy ? "Creating…" : "Create group"}
-          </button>
-        </div>
-      </form>
-    </section>
+        <button type="submit" disabled={busy || selected.size === 0}>
+          {busy ? "Creating…" : "Create group"}
+        </button>
+      </div>
+    </form>
   );
 }
-
-// --- New Room form ----------------------------------------------------
 
 function NewRoomForm({
   session,
@@ -999,45 +1314,38 @@ function NewRoomForm({
   }
 
   return (
-    <section className="pane form-pane">
-      <header className="form-header">
-        <h2>New room</h2>
+    <form onSubmit={submit} className="form">
+      <label>
+        Name
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={64}
+          placeholder="general"
+          required
+        />
+      </label>
+      <label>
+        Topic <span className="hint">(optional)</span>
+        <input
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          maxLength={256}
+          placeholder="What's this room for?"
+        />
+      </label>
+      {error && <div className="error">{error}</div>}
+      <div className="form-actions">
         <button type="button" onClick={onCancel}>
           Cancel
         </button>
-      </header>
-      <form onSubmit={submit} className="form">
-        <label>
-          Name
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={64}
-            placeholder="general"
-            required
-          />
-        </label>
-        <label>
-          Topic <span className="hint">(optional)</span>
-          <input
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            maxLength={256}
-            placeholder="What's this room for?"
-          />
-        </label>
-        {error && <div className="error">{error}</div>}
-        <div className="form-actions">
-          <button type="submit" disabled={busy || !name.trim()}>
-            {busy ? "Creating…" : "Create room"}
-          </button>
-        </div>
-      </form>
-    </section>
+        <button type="submit" disabled={busy || !name.trim()}>
+          {busy ? "Creating…" : "Create room"}
+        </button>
+      </div>
+    </form>
   );
 }
-
-// --- Browse rooms -----------------------------------------------------
 
 function BrowseRoomsView({
   session,
@@ -1077,55 +1385,51 @@ function BrowseRoomsView({
   }
 
   return (
-    <section className="pane form-pane">
-      <header className="form-header">
-        <h2>Browse rooms</h2>
+    <div className="form">
+      {error && <div className="error">{error}</div>}
+      {rooms === null ? (
+        <p className="empty">Loading…</p>
+      ) : rooms.length === 0 ? (
+        <p className="empty">No rooms yet. Create one with "+ Room".</p>
+      ) : (
+        <ul className="rooms-list">
+          {rooms.map((r) => (
+            <li key={r.id}>
+              <div className="room-info">
+                <div className="room-name">
+                  # {r.name} <span className="badge">{r.member_count}</span>
+                </div>
+                {r.topic && <div className="room-topic">{r.topic}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleJoin(r)}
+                disabled={joining === r.id}
+              >
+                {joining === r.id ? "Joining…" : "Join"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="form-actions">
         <button type="button" onClick={onCancel}>
           Close
         </button>
-      </header>
-      <div className="form">
-        {error && <div className="error">{error}</div>}
-        {rooms === null ? (
-          <p className="empty">Loading…</p>
-        ) : rooms.length === 0 ? (
-          <p className="empty">No rooms yet. Create one with "+ Room".</p>
-        ) : (
-          <ul className="rooms-list">
-            {rooms.map((r) => (
-              <li key={r.id}>
-                <div className="room-info">
-                  <div className="room-name">
-                    # {r.name}{" "}
-                    <span className="badge">{r.member_count}</span>
-                  </div>
-                  {r.topic && <div className="room-topic">{r.topic}</div>}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleJoin(r)}
-                  disabled={joining === r.id}
-                >
-                  {joining === r.id ? "Joining…" : "Join"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
-    </section>
+    </div>
   );
 }
 
-// --- Helpers ----------------------------------------------------------
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
 
 function sortByUsername(users: UserInfo[]): UserInfo[] {
   return [...users].sort((a, b) => a.username.localeCompare(b.username));
 }
 
 function sortConversations(convs: ConversationView[]): ConversationView[] {
-  // /api/conversations already returns latest-first; if we built this
-  // map from WS events on the fly, fall back to created_at then id.
   return [...convs].sort((a, b) => {
     if (a.created_at !== b.created_at) {
       return a.created_at < b.created_at ? 1 : -1;
@@ -1192,4 +1496,22 @@ function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {
   for (const m of a) byID.set(m.id, m);
   for (const m of b) byID.set(m.id, m);
   return Array.from(byID.values()).sort((x, y) => x.id - y.id);
+}
+
+function cryptoRandomID(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
 }
