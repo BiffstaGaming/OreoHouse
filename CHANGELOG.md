@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.12.0...v0.13.0) (2026-05-21)
+
+
+### Features
+
+* 10 review fixes + 10 new features (edit/delete/reply/pin/search/mute/lightbox/drag-drop/sounds/slash-cmds) ([a0c6708](https://github.com/BiffstaGaming/OreoHouse/commit/a0c67085bebae5991736ca606c544a494aac08cf))
+* message editing, soft deletion, and replies ([62d39da](https://github.com/BiffstaGaming/OreoHouse/commit/62d39da9b1607ffc0da00221b7454ed4839f75b9))
+* pinned messages — pin/unpin button + 📌 badge ([7c1570f](https://github.com/BiffstaGaming/OreoHouse/commit/7c1570f10ad8fbdd858829ef3ab872f453b343a1))
+* search, mute conv, drag-drop, lightbox, MSN sounds, slash cmds ([8930e7e](https://github.com/BiffstaGaming/OreoHouse/commit/8930e7e2c63aae434756745b3144744aca1d7e72))
+
+
+### Bug Fixes
+
+* ten polish items from review of avatars + emoji + reactions ([1b14e1e](https://github.com/BiffstaGaming/OreoHouse/commit/1b14e1ed58ac014b32b942fec231b5946a05eacc))
+
 ## [0.12.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.11.0...v0.12.0) (2026-05-21)
 
 
