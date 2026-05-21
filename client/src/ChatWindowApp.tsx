@@ -19,6 +19,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { fileURL, uploadFile } from "./lib/api";
 import { playMessageBlip, playNudge } from "./lib/sounds";
+import { applyTheme } from "./lib/theme";
 import { flashWindowIfUnfocused, setWindowTitle } from "./lib/tauri";
 import {
   EVT,
@@ -132,6 +133,12 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
             }
             setReactions(rxs);
             setPinned(new Set(e.payload.pinned ?? []));
+            // Apply theme from hydrate so this sub-window matches the
+            // main window from first paint. main.tsx already applied
+            // whatever localStorage said on initial load, but this
+            // catches the case where main switched theme while we
+            // weren't open.
+            applyTheme(e.payload.theme);
             // Seed userCache from conv members + each message's sender.
             const uc = new Map<number, UserInfo>();
             uc.set(e.payload.session.user.id, e.payload.session.user);
@@ -219,6 +226,15 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           EVT.ConvMuteChanged,
           (e) => {
             setConvMuted(e.payload.muted);
+          },
+          opts,
+        ),
+        // Theme change broadcast main→chat. Main iterates open chats
+        // and emitTo's each one, so we label-filter like the rest.
+        await listen<{ theme: "aurora" | "daylight" | "classic" }>(
+          EVT.ThemeChanged,
+          (e) => {
+            applyTheme(e.payload.theme);
           },
           opts,
         ),

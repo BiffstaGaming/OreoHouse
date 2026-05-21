@@ -52,6 +52,17 @@ export type HydratePayload = {
   reactions: Record<number, ReactionGroup[]>;
   // Initial set of pinned message ids in this conversation.
   pinned: number[];
+  // Active UI theme so chat sub-windows render in the same skin as
+  // the main window on first paint. Live changes flow via
+  // EVT.ThemeChanged.
+  theme: "aurora" | "daylight" | "classic";
+};
+
+// Broadcast whenever the user picks a new theme in the main window's
+// profile editor. Chat windows listen and re-apply data-theme on
+// documentElement.
+export type ThemeChangedPayload = {
+  theme: "aurora" | "daylight" | "classic";
 };
 
 export type MessagePayload = {
@@ -156,6 +167,7 @@ export const EVT = {
   ConvUpdated: "oreo:chat:conv_updated",
   MutedChanged: "oreo:chat:muted_changed",
   ConvMuteChanged: "oreo:chat:conv_mute_changed",
+  ThemeChanged: "oreo:chat:theme_changed",
   // chat → main (plain emit, conv id is in the payload)
   Ready: "oreo:chat:ready",
   Send: "oreo:chat:send",

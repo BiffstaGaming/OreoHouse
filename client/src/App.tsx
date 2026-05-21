@@ -74,6 +74,12 @@ import {
   flashWindowIfUnfocused,
   setWindowTitle,
 } from "./lib/tauri";
+import {
+  applyTheme,
+  loadTheme,
+  saveTheme,
+  type ThemeName,
+} from "./lib/theme";
 import { checkForUpdate, type AvailableUpdate } from "./lib/updater";
 import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
@@ -360,6 +366,13 @@ function ChatScreen({
   const [mutedConvs, setMutedConvs] = useState<Set<number>>(() => loadMutedConvs());
   const mutedConvsRef = useRef(mutedConvs);
   mutedConvsRef.current = mutedConvs;
+  // Active UI theme. Initial value is whatever main.tsx already applied
+  // to documentElement on boot, so this ref-backed state stays in sync
+  // with the DOM. Changing it re-paints (via applyTheme) AND fans the
+  // new value out to every open chat sub-window.
+  const [theme, setTheme] = useState<ThemeName>(() => loadTheme());
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   // Sign-in / sign-out sounds are gated for the first few seconds
   // after we connect, so the welcome → presence delta burst doesn't
   // turn into a chorus. Armed once the page has been live a moment.
@@ -405,6 +418,18 @@ function ChatScreen({
       }
       return next;
     });
+  }
+
+  // Theme picker handler. Persists, repaints the main window, and
+  // fans the change out to every open chat sub-window so the whole UI
+  // flips in one beat.
+  function changeTheme(next: ThemeName) {
+    setTheme(next);
+    saveTheme(next);
+    applyTheme(next);
+    for (const id of openChatsRef.current) {
+      void emitTo(`chat-${id}`, EVT.ThemeChanged, { theme: next });
+    }
   }
 
   // upsertUser merges an incoming UserInfo into the cache. If the
@@ -550,6 +575,7 @@ function ChatScreen({
             reads: readsObj,
             reactions: reactionsObj,
             pinned: Array.from(pinnedRef.current.get(cid) ?? new Set()),
+            theme: themeRef.current,
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -1441,6 +1467,8 @@ function ChatScreen({
           me={userCache.get(session.user.id) ?? session.user}
           serverUrl={session.serverUrl}
           token={session.token}
+          theme={theme}
+          onThemeChange={changeTheme}
           onClose={() => setProfileOpen(false)}
         />
       )}
