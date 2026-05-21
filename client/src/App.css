@@ -29,6 +29,11 @@ html,
 body,
 #root {
   height: 100%;
+  /* The app's flex layout fills the window via .phase6 — there should
+     never be a page-level scrollbar. Suppressing overflow here also
+     stops Windows' "always show scrollbars" accessibility setting from
+     reserving a gutter on the right edge of every screen. */
+  overflow: hidden;
 }
 
 body {

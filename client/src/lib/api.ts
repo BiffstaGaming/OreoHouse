@@ -277,6 +277,18 @@ async function postJSON<T>(
   return parseResponse<T>(resp);
 }
 
+// ApiError carries the HTTP status alongside the error message so
+// callers can branch on 401 (stale token → bounce to login) without
+// string-matching.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function parseResponse<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let msg = `HTTP ${resp.status}`;
@@ -286,7 +298,7 @@ async function parseResponse<T>(resp: Response): Promise<T> {
     } catch {
       /* body wasn't JSON, keep the HTTP <status> fallback */
     }
-    throw new Error(msg);
+    throw new ApiError(msg, resp.status);
   }
   return (await resp.json()) as T;
 }

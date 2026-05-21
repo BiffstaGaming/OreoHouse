@@ -12,6 +12,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getAllWindows } from "@tauri-apps/api/window";
 
 import {
+  ApiError,
   createDM,
   createGroup,
   createRoom,
@@ -36,6 +37,13 @@ import {
   type SessionSnapshot,
   type TypingPayload,
 } from "./lib/chatBridge";
+import {
+  clearSession as clearStoredSession,
+  loadLastServerUrl,
+  loadSession,
+  saveLastServerUrl,
+  saveSession,
+} from "./lib/session";
 import {
   isMuted as isMutedPersisted,
   playMessageBlip,
@@ -100,12 +108,26 @@ function loadGeometry(convID: number): Geometry | null {
 }
 
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
+  // Auto-resume from a persisted session if we have one. The token is
+  // validated implicitly on the first authenticated REST call — a 401
+  // there clears storage and bounces us back to login.
+  const [session, setSession] = useState<Session | null>(() => loadSession());
+
+  function handleSession(s: Session) {
+    saveSession(s);
+    saveLastServerUrl(s.serverUrl);
+    setSession(s);
+  }
+
+  function handleClearSession() {
+    clearStoredSession();
+    setSession(null);
+  }
 
   if (!session) {
-    return <LoginScreen onSession={setSession} />;
+    return <LoginScreen onSession={handleSession} />;
   }
-  return <ChatScreen session={session} onSignOut={() => setSession(null)} />;
+  return <ChatScreen session={session} onSignOut={handleClearSession} />;
 }
 
 // ---------------------------------------------------------------------
@@ -113,7 +135,11 @@ export default function App() {
 // ---------------------------------------------------------------------
 
 function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
-  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
+  // Pre-fill the server URL from the last successful login, falling
+  // back to the dev default for a fresh install.
+  const [serverUrl, setServerUrl] = useState(
+    () => loadLastServerUrl() ?? DEFAULT_SERVER_URL,
+  );
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -258,9 +284,18 @@ function ChatScreen({
       const convs = await listConversations(session.serverUrl, session.token);
       setConversations(new Map(convs.map((c) => [c.id, c])));
     } catch (err) {
+      // If the persisted token has been revoked / expired (or the
+      // server has been rebuilt and lost our session row), bounce back
+      // to login so the user can re-authenticate instead of staring at
+      // an empty contact list.
+      if (err instanceof ApiError && err.status === 401) {
+        console.warn("session rejected by server, signing out");
+        onSignOut();
+        return;
+      }
       console.error("listConversations failed:", err);
     }
-  }, [session]);
+  }, [session, onSignOut]);
 
   // ---- WebSocket connect ------------------------------------------
 
