@@ -651,6 +651,19 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
     user-select: none;
     -webkit-user-drag: none;
 }
+/* The logo PNG is dark ink on transparent — invisible on dark
+ * backgrounds. Invert + hue-rotate flips dark to light without
+ * shifting non-grayscale hues (same trick the desktop client
+ * uses on its .login-logo). Applied to dark themes only. */
+@media (prefers-color-scheme: dark) {
+    .brand-logo { filter: invert(1) hue-rotate(180deg); }
+}
+:root[data-theme="aurora"] .brand-logo {
+    filter: invert(1) hue-rotate(180deg);
+}
+:root[data-theme="daylight"] .brand-logo {
+    filter: none;
+}
 
 /* ---- PROFILE MODAL — avatar preview + theme picker ---- */
 .profile-avatar-row {

@@ -1005,6 +1005,24 @@ button:disabled {
   overflow: hidden;
   opacity: 0.85;
 }
+/* Classic theme + OS dark mode: the mine bubble switches to a dark-
+ * blue gradient (see line 706) but the quote-sender colour is still
+ * the default var(--msn-blue-dark) navy, which is unreadable on the
+ * new dark bubble. Lift to a near-white that holds contrast against
+ * the dark blue. Aurora/Daylight have higher-specificity overrides
+ * below this rule, so they win for their themes. */
+@media (prefers-color-scheme: dark) {
+  .msg-mine .msg-quote {
+    background: rgba(255, 255, 255, 0.08);
+    border-left-color: rgba(255, 255, 255, 0.5);
+  }
+  .msg-mine .msg-quote-sender {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  .msg-mine .msg-quote-body {
+    color: rgba(255, 255, 255, 0.78);
+  }
+}
 .msg-quote-deleted {
   font-style: italic;
   opacity: 0.7;
