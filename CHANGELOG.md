@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.4.1...v0.5.0) (2026-05-21)
+
+
+### Features
+
+* **api:** REST endpoints for groups, rooms, and members ([c51fd99](https://github.com/BiffstaGaming/OreoHouse/commit/c51fd99ba7fff97e60db17c6f0fe1009bcc95f17))
+* **api:** REST upload + download for attachments ([91cbd5e](https://github.com/BiffstaGaming/OreoHouse/commit/91cbd5ece6a968fe316e4f54c55ddc4c476d7a25))
+* **client:** file picker + inline image previews in the composer ([279287c](https://github.com/BiffstaGaming/OreoHouse/commit/279287c189f8297345e3411a12a2546b23b92d4e))
+* **client:** groups, rooms, and member-aware chat UI ([813791c](https://github.com/BiffstaGaming/OreoHouse/commit/813791ceb26f1fd3b451803644f6617313d0ec70))
+* **db:** attachments table + filesystem store ([440abaf](https://github.com/BiffstaGaming/OreoHouse/commit/440abafc58886a9caca6d7141b579ef370e2a2d2))
+* **db:** groups + rooms in conversations service ([b772a3b](https://github.com/BiffstaGaming/OreoHouse/commit/b772a3b2ac4d6fe264fd1441d4806c0176d120c7))
+* **ws:** attachments on messages — send, broadcast, history, replay ([6d6b81c](https://github.com/BiffstaGaming/OreoHouse/commit/6d6b81c0731a5ee195f8e483350a4f3fcf98f134))
+* **ws:** conversation_added + conversation_members_changed events ([fc8873d](https://github.com/BiffstaGaming/OreoHouse/commit/fc8873d87e52bdfefff68cb33cb86e96b2587fb8))
+
 ## [0.4.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.4.0...v0.4.1) (2026-05-21)
 
 
