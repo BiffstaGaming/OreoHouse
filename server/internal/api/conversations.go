@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/BiffstaGaming/OreoHouse/server/internal/attachments"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/messages"
@@ -35,25 +36,35 @@ func (noopBroadcaster) SendToUsers(_ []byte, _ []int64) []int64 { return nil }
 // ConversationsHandler serves /api/conversations/* endpoints. Construct
 // via NewConversationsHandler.
 type ConversationsHandler struct {
-	auth     *auth.Service
-	convs    *conversations.Service
-	messages *messages.Service
-	hub      Broadcaster
+	auth        *auth.Service
+	convs       *conversations.Service
+	messages    *messages.Service
+	attachments *attachments.Service
+	hub         Broadcaster
 }
 
-// NewConversationsHandler wires the three services together. auth is
-// used by the requireAuth middleware. hub may be nil for tests that
-// don't care about WS-side broadcasting.
+// NewConversationsHandler wires the services together. auth is used
+// by the requireAuth middleware. attSvc may be nil for tests that
+// don't exercise attachments — message history just omits the
+// attachments field in that case. hub may be nil for tests that don't
+// care about WS-side broadcasting.
 func NewConversationsHandler(
 	authSvc *auth.Service,
 	convsSvc *conversations.Service,
 	msgsSvc *messages.Service,
+	attSvc *attachments.Service,
 	hub Broadcaster,
 ) *ConversationsHandler {
 	if hub == nil {
 		hub = noopBroadcaster{}
 	}
-	return &ConversationsHandler{auth: authSvc, convs: convsSvc, messages: msgsSvc, hub: hub}
+	return &ConversationsHandler{
+		auth:        authSvc,
+		convs:       convsSvc,
+		messages:    msgsSvc,
+		attachments: attSvc,
+		hub:         hub,
+	}
 }
 
 // Mount registers the /api/conversations/* and /api/rooms/* routes,
@@ -161,11 +172,49 @@ func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Batch-fetch attachments for the page, if the handler has the
+	// attachments service wired (nil-safe for tests).
+	var attsByMsg map[int64][]attachments.Attachment
+	if h.attachments != nil && len(rows) > 0 {
+		ids := make([]int64, len(rows))
+		for i, m := range rows {
+			ids[i] = m.ID
+		}
+		attsByMsg, err = h.attachments.ListForMessages(r.Context(), ids)
+		if err != nil {
+			slog.Warn("attachments hydration failed", "error", err)
+			attsByMsg = nil // fall through and return without attachments
+		}
+	}
+
 	out := make([]proto.MessageView, len(rows))
 	for i, m := range rows {
-		out[i] = messageToView(m, members)
+		view := messageToView(m, members)
+		view.Attachments = attachmentsToViews(attsByMsg[m.ID])
+		out[i] = view
 	}
 	writeJSON(w, http.StatusOK, proto.ListMessagesResponse{Messages: out})
+}
+
+// attachmentsToViews maps attachments.Attachment to AttachmentView.
+// Returns nil for an empty input so the JSON omitempty kicks in.
+func attachmentsToViews(rows []attachments.Attachment) []proto.AttachmentView {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]proto.AttachmentView, len(rows))
+	for i, a := range rows {
+		out[i] = proto.AttachmentView{
+			ID:          a.ID,
+			Filename:    a.Filename,
+			MimeType:    a.MimeType,
+			SizeBytes:   a.SizeBytes,
+			ImageWidth:  a.ImageWidth,
+			ImageHeight: a.ImageHeight,
+		}
+	}
+	return out
 }
 
 // toViews hydrates Conversation rows into ConversationView with member

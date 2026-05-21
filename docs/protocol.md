@@ -78,11 +78,23 @@ Broadcast to every member of a conversation (including the sender) whenever some
   "conversation_id": 7,
   "sender": { "id": 1, "username": "alice", "created_at": "..." },
   "body": "hello",
-  "created_at": "..."
+  "created_at": "...",
+  "attachments": [
+    {
+      "id": 9,
+      "filename": "cat.jpg",
+      "mime_type": "image/jpeg",
+      "size_bytes": 234567,
+      "image_width": 1024,
+      "image_height": 768
+    }
+  ]
 }
 ```
 
 `id` is a monotonically increasing 64-bit integer assigned by the server. Clients can use it both as a stable identifier (for dedup) and as a cursor for paginating history via `GET /api/conversations/{id}/messages?before=<id>`.
+
+`attachments` is omitted when the message has none. Each attachment is fetched from `GET /api/files/{id}?token=<session>` — the query-param auth lets `<img src>` tags render images without setting a header. `image_width` / `image_height` are present (when known) so the client can reserve layout space.
 
 #### `conversation_added`
 
@@ -150,13 +162,18 @@ Keepalive heartbeat. The server replies with `pong`. Clients should send one eve
 
 #### `message`
 
-Post a message to a conversation the sender is a member of. Body is 1..4096 bytes, plain text only.
+Post a message to a conversation the sender is a member of. Either `body` (0..4096 bytes, plain text) or a non-empty `attachment_ids` array (or both) must be present.
 
 ```json
-{ "type": "message", "conversation_id": 7, "body": "hello" }
+{
+  "type": "message",
+  "conversation_id": 7,
+  "body": "look at this cat",
+  "attachment_ids": [9]
+}
 ```
 
-The server validates membership and body length; on failure it sends an `error` event (with `code` `invalid_message` or `forbidden`) and keeps the connection open. On success it broadcasts an `message` event (server→client shape above) to every member, including the sender — so the sender's UI adds the row through the same path everyone else does.
+`attachment_ids` references rows previously created by `POST /api/uploads`. Each ID must exist, be owned by the sender, and not already be linked to another message — otherwise the server emits an `error` event (`invalid_message` or `forbidden`) and the message is *not* persisted. On success it broadcasts the `message` event (server→client shape above, with the same attachment shapes inlined under `attachments`) to every conversation member, including the sender.
 
 ## Connection lifecycle
 

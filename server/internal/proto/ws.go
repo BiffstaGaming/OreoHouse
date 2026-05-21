@@ -71,22 +71,25 @@ type PongMessage struct {
 }
 
 // IncomingMessage is the client→server "message" envelope: send a
-// chat message to a conversation the sender is a member of.
+// chat message to a conversation the sender is a member of. At least
+// one of Body or AttachmentIDs must be present.
 type IncomingMessage struct {
-	Type           string `json:"type"`
-	ConversationID int64  `json:"conversation_id"`
-	Body           string `json:"body"`
+	Type           string  `json:"type"`
+	ConversationID int64   `json:"conversation_id"`
+	Body           string  `json:"body"`
+	AttachmentIDs  []int64 `json:"attachment_ids,omitempty"`
 }
 
 // OutgoingMessage is the server→every-member "message" envelope.
 // Echoed to the sender too so a single message path drives all UIs.
 type OutgoingMessage struct {
-	Type           string   `json:"type"`
-	ID             int64    `json:"id"`
-	ConversationID int64    `json:"conversation_id"`
-	Sender         UserInfo `json:"sender"`
-	Body           string   `json:"body"`
-	CreatedAt      string   `json:"created_at"`
+	Type           string           `json:"type"`
+	ID             int64            `json:"id"`
+	ConversationID int64            `json:"conversation_id"`
+	Sender         UserInfo         `json:"sender"`
+	Body           string           `json:"body"`
+	CreatedAt      string           `json:"created_at"`
+	Attachments    []AttachmentView `json:"attachments,omitempty"`
 }
 
 // ConversationAddedMessage is pushed to a user when they're added to

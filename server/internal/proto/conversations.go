@@ -71,11 +71,12 @@ type CreateDMRequest struct {
 
 // MessageView is the JSON projection of a message.
 type MessageView struct {
-	ID             int64  `json:"id"`
-	ConversationID int64  `json:"conversation_id"`
-	Sender         UserInfo `json:"sender"`
-	Body           string `json:"body"`
-	CreatedAt      string `json:"created_at"`
+	ID             int64            `json:"id"`
+	ConversationID int64            `json:"conversation_id"`
+	Sender         UserInfo         `json:"sender"`
+	Body           string           `json:"body"`
+	CreatedAt      string           `json:"created_at"`
+	Attachments    []AttachmentView `json:"attachments,omitempty"`
 }
 
 // ListMessagesResponse is the body of GET /api/conversations/{id}/messages.

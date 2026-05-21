@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	server "github.com/BiffstaGaming/OreoHouse/server"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/attachments"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
@@ -21,12 +22,13 @@ import (
 )
 
 type testStack struct {
-	db    *sql.DB
-	auth  *auth.Service
-	convs *conversations.Service
-	msgs  *messages.Service
-	hub   *Hub
-	srv   *httptest.Server
+	db          *sql.DB
+	auth        *auth.Service
+	convs       *conversations.Service
+	msgs        *messages.Service
+	attachments *attachments.Service
+	hub         *Hub
+	srv         *httptest.Server
 }
 
 func newTestStack(t *testing.T) *testStack {
@@ -42,17 +44,21 @@ func newTestStack(t *testing.T) *testStack {
 	svc := auth.NewService(d, 0)
 	convs := conversations.NewService(d)
 	msgs := messages.NewService(d)
+	attSvc, err := attachments.NewService(d, t.TempDir())
+	if err != nil {
+		t.Fatalf("attachments.NewService: %v", err)
+	}
 	hub := NewHub()
 	hubCtx, hubCancel := context.WithCancel(context.Background())
 	go hub.Run(hubCtx)
-	h := NewHandler(hub, svc, convs, msgs)
+	h := NewHandler(hub, svc, convs, msgs, attSvc)
 	srv := httptest.NewServer(h)
 	t.Cleanup(func() {
 		srv.Close()
 		hubCancel()
 		_ = d.Close()
 	})
-	return &testStack{db: d, auth: svc, convs: convs, msgs: msgs, hub: hub, srv: srv}
+	return &testStack{db: d, auth: svc, convs: convs, msgs: msgs, attachments: attSvc, hub: hub, srv: srv}
 }
 
 // seedUser creates a user via the service and returns a fresh session token

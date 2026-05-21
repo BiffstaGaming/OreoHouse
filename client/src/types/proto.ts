@@ -83,14 +83,17 @@ export interface OutgoingMessage {
   sender: UserInfo;
   body: string;
   created_at: string;
+  attachments?: AttachmentView[];
 }
 
-// Client→server: post a message to a conversation. Body is 1..4096
-// bytes, plain text.
+// Client→server: post a message to a conversation. Body is 0..4096
+// bytes plain text; either body or attachment_ids (or both) must be
+// non-empty.
 export interface IncomingMessage {
   type: "message";
   conversation_id: number;
   body: string;
+  attachment_ids?: number[];
 }
 
 // Pushed to a user when they're added to a new conversation.
@@ -169,8 +172,23 @@ export interface MessageView {
   sender: UserInfo;
   body: string;
   created_at: string;
+  attachments?: AttachmentView[];
 }
 
 export interface ListMessagesResponse {
   messages: MessageView[];
+}
+
+// JSON shape returned by POST /api/uploads and nested under
+// OutgoingMessage / MessageView. Fetched bytes live at
+// `${serverUrl}/api/files/${id}?token=<session>` — the query-param
+// auth is required because <img src> can't carry an Authorization
+// header.
+export interface AttachmentView {
+  id: number;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  image_width?: number;
+  image_height?: number;
 }

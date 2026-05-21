@@ -65,7 +65,7 @@ func TestValidateBody(t *testing.T) {
 		in   string
 		want error
 	}{
-		{"empty", "", ErrBodyEmpty},
+		{"empty (allowed since Phase 5)", "", nil},
 		{"ok short", "hi", nil},
 		{"at max", strings.Repeat("a", MaxBodyBytes), nil},
 		{"over max", strings.Repeat("a", MaxBodyBytes+1), ErrBodyTooLong},
@@ -106,16 +106,23 @@ func TestSend_PersistsMessage(t *testing.T) {
 	}
 }
 
-func TestSend_RejectsInvalidBody(t *testing.T) {
+func TestSend_RejectsOversizeBody(t *testing.T) {
 	s := newStack(t)
 	convID, alice, _ := s.seedDM(t)
 	ctx := context.Background()
 
-	if _, err := s.svc.Send(ctx, convID, alice.ID, ""); !errors.Is(err, ErrBodyEmpty) {
-		t.Errorf("expected ErrBodyEmpty, got %v", err)
-	}
 	if _, err := s.svc.Send(ctx, convID, alice.ID, strings.Repeat("a", MaxBodyBytes+1)); !errors.Is(err, ErrBodyTooLong) {
 		t.Errorf("expected ErrBodyTooLong, got %v", err)
+	}
+}
+
+func TestSend_AllowsEmptyBody(t *testing.T) {
+	// Phase 5: an attachment-only message has body == "".
+	s := newStack(t)
+	convID, alice, _ := s.seedDM(t)
+	ctx := context.Background()
+	if _, err := s.svc.Send(ctx, convID, alice.ID, ""); err != nil {
+		t.Errorf("expected empty body to be allowed, got %v", err)
 	}
 }
 

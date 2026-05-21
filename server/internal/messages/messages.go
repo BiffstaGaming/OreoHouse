@@ -31,7 +31,6 @@ const MaxHistoryLimit = 200
 const DefaultReplayLimit = 500
 
 var (
-	ErrBodyEmpty   = errors.New("message body is empty")
 	ErrBodyTooLong = fmt.Errorf("message body exceeds %d bytes", MaxBodyBytes)
 	ErrNotFound    = errors.New("message not found")
 )
@@ -59,13 +58,12 @@ func NewService(db *sql.DB) *Service {
 	}
 }
 
-// ValidateBody returns ErrBodyEmpty / ErrBodyTooLong if body is not
-// allowed. Caller (CLI, REST, WS handler) should validate before
-// hitting Send.
+// ValidateBody returns ErrBodyTooLong if body exceeds MaxBodyBytes.
+// Empty bodies are allowed at this layer — Phase 5 introduced
+// attachment-only messages, and the body-XOR-attachments rule lives
+// in the WS handler. Callers (WS / future REST) still need to enforce
+// "must have body OR attachments" themselves.
 func ValidateBody(body string) error {
-	if len(body) == 0 {
-		return ErrBodyEmpty
-	}
 	if len(body) > MaxBodyBytes {
 		return ErrBodyTooLong
 	}
@@ -73,8 +71,9 @@ func ValidateBody(body string) error {
 }
 
 // Send inserts a new message. The caller is responsible for verifying
-// the sender is a member of the conversation — Send does not check
-// (and shouldn't, to keep this layer simple).
+// the sender is a member of the conversation AND that body + any
+// attachments together satisfy the "body OR attachments" rule — Send
+// only enforces the body length cap.
 func (s *Service) Send(ctx context.Context, conversationID, senderID int64, body string) (Message, error) {
 	if err := ValidateBody(body); err != nil {
 		return Message{}, err

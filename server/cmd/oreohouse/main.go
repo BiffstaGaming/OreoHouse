@@ -103,13 +103,13 @@ func runServe(args []string) error {
 	authHandler := api.NewAuthHandler(authSvc)
 
 	hub := ws.NewHub()
-	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, hub)
+	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
 	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)
 
-	wsHandler := ws.NewHandler(hub, authSvc, convsSvc, msgsSvc)
+	wsHandler := ws.NewHandler(hub, authSvc, convsSvc, msgsSvc, attachmentsSvc)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

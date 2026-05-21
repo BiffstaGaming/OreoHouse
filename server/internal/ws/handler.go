@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/BiffstaGaming/OreoHouse/server/internal/attachments"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/messages"
@@ -26,21 +27,29 @@ const shutdownDrain = 2 * time.Second
 // message replay → read/write pumps → presence offline + last_seen_at
 // update on disconnect).
 type Handler struct {
-	hub      *Hub
-	auth     *auth.Service
-	convs    *conversations.Service
-	messages *messages.Service
+	hub         *Hub
+	auth        *auth.Service
+	convs       *conversations.Service
+	messages    *messages.Service
+	attachments *attachments.Service
 }
 
-// NewHandler wires the Hub and the auth/conversations/messages
-// services into an http.Handler.
+// NewHandler wires the Hub and the auth/conversations/messages/
+// attachments services into an http.Handler.
 func NewHandler(
 	hub *Hub,
 	authSvc *auth.Service,
 	convsSvc *conversations.Service,
 	msgsSvc *messages.Service,
+	attSvc *attachments.Service,
 ) *Handler {
-	return &Handler{hub: hub, auth: authSvc, convs: convsSvc, messages: msgsSvc}
+	return &Handler{
+		hub:         hub,
+		auth:        authSvc,
+		convs:       convsSvc,
+		messages:    msgsSvc,
+		attachments: attSvc,
+	}
 }
 
 // ServeHTTP authenticates the request and, on success, hands the
@@ -211,6 +220,10 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "conversation_id is required")
 		return
 	}
+	if in.Body == "" && len(in.AttachmentIDs) == 0 {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "message must have a body or attachments")
+		return
+	}
 	if err := messages.ValidateBody(in.Body); err != nil {
 		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, err.Error())
 		return
@@ -226,11 +239,47 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		return
 	}
 
+	// Pre-validate attachments so we don't persist a message we can't
+	// fully back up. Each must exist, be owned by the sender, and not
+	// already be linked to a message.
+	preValidated := make([]attachments.Attachment, 0, len(in.AttachmentIDs))
+	for _, aid := range in.AttachmentIDs {
+		a, err := h.attachments.Get(ctx, aid)
+		if errors.Is(err, attachments.ErrNotFound) {
+			h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "unknown attachment")
+			return
+		}
+		if err != nil {
+			slog.Error("ws: attachment lookup failed", "error", err, "attachment_id", aid)
+			h.sendErrorAsync(c, proto.ErrCodeForbidden, "internal error")
+			return
+		}
+		if a.UploaderID != c.user.ID {
+			h.sendErrorAsync(c, proto.ErrCodeForbidden, "attachment belongs to a different user")
+			return
+		}
+		if a.MessageID != 0 {
+			h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "attachment already linked to a message")
+			return
+		}
+		preValidated = append(preValidated, a)
+	}
+
 	persisted, err := h.messages.Send(ctx, in.ConversationID, c.user.ID, in.Body)
 	if err != nil {
 		slog.Error("ws: message persist failed", "error", err)
 		h.sendErrorAsync(c, proto.ErrCodeForbidden, "internal error")
 		return
+	}
+
+	// Link the (already-validated) attachments. Any failure here is
+	// logged but doesn't abort the broadcast — the message is in the
+	// DB and the user expects feedback.
+	for _, a := range preValidated {
+		if err := h.attachments.Attach(ctx, a.ID, persisted.ID, c.user.ID); err != nil {
+			slog.Warn("ws: attach failed post-persist", "error", err,
+				"message_id", persisted.ID, "attachment_id", a.ID)
+		}
 	}
 
 	members, err := h.convs.Members(ctx, in.ConversationID)
@@ -246,8 +295,9 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 			ID:       c.user.ID,
 			Username: c.user.Username,
 		},
-		Body:      persisted.Body,
-		CreatedAt: persisted.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Body:        persisted.Body,
+		CreatedAt:   persisted.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Attachments: attachmentsToViews(preValidated),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -300,6 +350,17 @@ func (h *Handler) replayMissed(ctx context.Context, conn *websocket.Conn, user a
 			slog.Warn("ws: replay Members failed", "error", err, "conv_id", c.ID)
 			continue
 		}
+		// Batch-load attachments for the whole replay page so we
+		// don't do N queries per conversation.
+		messageIDs := make([]int64, 0, len(missed))
+		for _, m := range missed {
+			messageIDs = append(messageIDs, m.ID)
+		}
+		attsByMessage, err := h.attachments.ListForMessages(ctx, messageIDs)
+		if err != nil {
+			slog.Warn("ws: replay attachments lookup failed", "error", err, "conv_id", c.ID)
+			attsByMessage = nil
+		}
 		maxID := lastID
 		for _, m := range missed {
 			out := proto.OutgoingMessage{
@@ -309,6 +370,7 @@ func (h *Handler) replayMissed(ctx context.Context, conn *websocket.Conn, user a
 				Sender:         senderUserInfo(m.SenderID, members),
 				Body:           m.Body,
 				CreatedAt:      m.CreatedAt.UTC().Format(time.RFC3339Nano),
+				Attachments:    attachmentsToViews(attsByMessage[m.ID]),
 			}
 			b, err := json.Marshal(out)
 			if err != nil {
@@ -340,6 +402,27 @@ func senderUserInfo(senderID int64, members []conversations.Member) proto.UserIn
 		}
 	}
 	return proto.UserInfo{ID: senderID}
+}
+
+// attachmentsToViews maps service-level Attachment rows to the proto
+// shape sent over the wire. Returns nil for an empty slice so the
+// JSON omitempty kicks in.
+func attachmentsToViews(rows []attachments.Attachment) []proto.AttachmentView {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]proto.AttachmentView, len(rows))
+	for i, a := range rows {
+		out[i] = proto.AttachmentView{
+			ID:          a.ID,
+			Filename:    a.Filename,
+			MimeType:    a.MimeType,
+			SizeBytes:   a.SizeBytes,
+			ImageWidth:  a.ImageWidth,
+			ImageHeight: a.ImageHeight,
+		}
+	}
+	return out
 }
 
 // writer runs on its own goroutine and is the only thing that calls

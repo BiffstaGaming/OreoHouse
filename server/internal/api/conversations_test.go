@@ -43,7 +43,7 @@ func newConvStack(t *testing.T) *convStack {
 	msgs := messages.NewService(d)
 
 	r := chi.NewRouter()
-	NewConversationsHandler(authSvc, convs, msgs, nil).Mount(r)
+	NewConversationsHandler(authSvc, convs, msgs, nil, nil).Mount(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
