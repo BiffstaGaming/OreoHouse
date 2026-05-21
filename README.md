@@ -4,7 +4,7 @@ A self-hosted family LAN messenger inspired by old-school clients like MSN Messe
 
 ## Status
 
-Phase 5 — file and photo uploads landed. New `attachments` table stores files under `<data_dir>/uploads/`; `POST /api/uploads` returns an attachment view (with image dimensions extracted server-side), and the client embeds attachment IDs in WS messages. Images render inline in the chat thread; other files appear as download chips. Default upload cap is 25 MiB, configurable via `OREOHOUSE_MAX_UPLOAD_MB`. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
+Phase 6 — real UI landed. The desktop client is now MSN/BeeBEEP-style: contact list as the primary view (online, offline DM partners, groups & rooms), with conversations opening in floating draggable chat windows on top. Closing the main window hides the app to the system tray (real Tauri tray icon with Show/Quit menu and left-click toggle); messages arriving in background conversations bump per-conv unread badges, flash the taskbar via `requestUserAttention`, and prefix the unread total onto the window title MSN-style. See [CLAUDE.md](CLAUDE.md) for the project mission and roadmap, [`docs/protocol.md`](docs/protocol.md) for the WebSocket wire protocol, and [`docs/decisions/`](docs/decisions/) for architecture decisions.
 
 ## Downloads
 
@@ -206,6 +206,15 @@ The package inherits visibility from this (private) repo by default. To pull fro
 
 1. **Make the package public.** On github.com: this repo → Packages → `oreohouse` → Package settings → Change visibility → Public. After that, anyone (including Portainer with no auth) can `docker pull`.
 2. **Keep it private + authenticate.** Generate a PAT with `read:packages` scope (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token). Then in Portainer: Registries → Add registry → Custom registry, URL `ghcr.io`, username = your GitHub username, password = the PAT. Portainer will use those creds for every `ghcr.io/...` pull.
+
+## Desktop UX
+
+The packaged desktop app behaves like MSN Messenger / BeeBEEP:
+
+- **Contact list** is the home view (centred, max 28 rem). Online people, offline DM partners, and groups/rooms appear as separate sections with per-conversation unread badges.
+- **Chat windows** open as floating cards layered above the contact list. Drag the title bar to move; click anywhere to bring to front; the minimize button collapses to a taskbar-style row along the bottom; the close button removes the window entirely (history is preserved in the DB). Multiple chats can be open at once; the Phase 6 windows are CSS-positioned within the single Tauri window (native multi-window can land in Phase 10 polish).
+- **System tray** is wired by the Tauri shell: left-click toggles the main window, right-click opens a Show / Quit menu, and the window's [X] button hides to tray rather than exiting. Quit is only reachable via the tray menu, so the app keeps receiving WebSocket events in the background.
+- **Notifications** are connection-state driven, no native push needed. A message in any conversation other than the focused front window bumps that conv's unread badge; if the main window is unfocused or hidden, the app also asks the OS for user attention (Windows taskbar flash, macOS dock bounce). The taskbar window title is prefixed with `(N)` for the total unread count.
 
 ## Windows client releases
 
