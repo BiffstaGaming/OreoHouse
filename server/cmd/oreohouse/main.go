@@ -71,7 +71,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  serve   Run the HTTP + WebSocket server")
-	fmt.Fprintln(os.Stderr, "  user    Manage user accounts (add, list)")
+	fmt.Fprintln(os.Stderr, "  user    Manage user accounts (add, list, promote, demote)")
 }
 
 func runServe(args []string) error {
