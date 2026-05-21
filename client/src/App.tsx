@@ -36,8 +36,12 @@ import {
   type ConvUpdatedPayload,
   type HydratePayload,
   type MembersChangedPayload,
+  type MessageDeletedPayload,
+  type MessageEditedPayload,
   type MessagePayload,
   type NudgePayload,
+  type OutgoingDeletePayload,
+  type OutgoingEditPayload,
   type OutgoingReactPayload,
   type ReactionPayload,
   type ReadReceiptPayload,
@@ -46,6 +50,10 @@ import {
   type TypingPayload,
   type UserUpdatedPayload,
 } from "./lib/chatBridge";
+import {
+  loadMutedConvs,
+  saveMutedConvs,
+} from "./lib/mutedConvs";
 import {
   clearSession as clearStoredSession,
   loadLastServerUrl,
@@ -57,6 +65,9 @@ import {
   isMuted as isMutedPersisted,
   playMessageBlip,
   playNudge,
+  playReactionPop,
+  playSignIn,
+  playSignOut,
   setMuted as setMutedPersisted,
 } from "./lib/sounds";
 import {
@@ -68,6 +79,7 @@ import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import { Avatar } from "./components/Avatar";
 import { ProfileModal } from "./components/ProfileModal";
+import { SearchModal } from "./components/SearchModal";
 import type {
   ConversationView,
   MessageView,
@@ -334,7 +346,24 @@ function ChatScreen({
   const [reactions, setReactions] = useState<Map<number, ReactionGroup[]>>(
     new Map(),
   );
+  // Per-conv set of pinned message ids. Hydrated lazily via the REST
+  // pins endpoint when a chat window opens; kept fresh by the live
+  // message_pinned / message_unpinned events.
+  const [pinned, setPinned] = useState<Map<number, Set<number>>>(new Map());
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
   const [profileOpen, setProfileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Set of conv IDs the user has individually muted (suppresses sound
+  // + flash + unread on incoming messages for those convs). Persisted
+  // per-machine via localStorage.
+  const [mutedConvs, setMutedConvs] = useState<Set<number>>(() => loadMutedConvs());
+  const mutedConvsRef = useRef(mutedConvs);
+  mutedConvsRef.current = mutedConvs;
+  // Sign-in / sign-out sounds are gated for the first few seconds
+  // after we connect, so the welcome → presence delta burst doesn't
+  // turn into a chorus. Armed once the page has been live a moment.
+  const presenceSoundsArmedRef = useRef(false);
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -423,6 +452,12 @@ function ChatScreen({
     try {
       const convs = await listConversations(session.serverUrl, session.token);
       setConversations(new Map(convs.map((c) => [c.id, c])));
+      // The REST endpoint now carries display_name + avatar_version on
+      // each member; feed the cache so contact rows render correctly
+      // before presence catches up.
+      for (const c of convs) {
+        for (const m of c.members) upsertUser(m);
+      }
     } catch (err) {
       // If the persisted token has been revoked / expired (or the
       // server has been rebuilt and lost our session row), bounce back
@@ -458,7 +493,15 @@ function ChatScreen({
       onError: () => setStatus("error"),
     });
     wsRef.current = client;
+    // Arm presence sounds after 3 s — enough for the initial welcome
+    // + presence burst to settle.
+    presenceSoundsArmedRef.current = false;
+    const armT = window.setTimeout(() => {
+      presenceSoundsArmedRef.current = true;
+    }, 3000);
     return () => {
+      window.clearTimeout(armT);
+      presenceSoundsArmedRef.current = false;
       client.close();
       wsRef.current = null;
     };
@@ -499,8 +542,10 @@ function ChatScreen({
               (typingRef.current.get(cid) ?? new Map()).values(),
             ),
             muted: mutedRef.current,
+            conv_muted: mutedConvsRef.current.has(cid),
             reads: readsObj,
             reactions: reactionsObj,
+            pinned: Array.from(pinnedRef.current.get(cid) ?? new Set()),
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -511,6 +556,67 @@ function ChatScreen({
             conversation_id: e.payload.conversation_id,
             body: e.payload.body,
             attachment_ids: e.payload.attachment_ids,
+            reply_to_id: e.payload.reply_to_id,
+          });
+        }),
+        await listen<ChatToMainEnvelope<OutgoingEditPayload>>(
+          EVT.OutgoingEdit,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "edit",
+              message_id: e.payload.message_id,
+              body: e.payload.body,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<OutgoingDeletePayload>>(
+          EVT.OutgoingDelete,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "delete",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<{ message_id: number }>>(
+          EVT.OutgoingPin,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "pin",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<{ message_id: number }>>(
+          EVT.OutgoingUnpin,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "unpin",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<{}>>(EVT.ToggleConvMute, (e) => {
+          const cid = e.payload.conversation_id;
+          setMutedConvs((prev) => {
+            const next = new Set(prev);
+            const becomingMuted = !next.has(cid);
+            if (becomingMuted) {
+              next.add(cid);
+            } else {
+              next.delete(cid);
+            }
+            saveMutedConvs(next);
+            // Echo the new state back so the chat window can flip
+            // its title-bar icon.
+            void emitTo(`chat-${cid}`, EVT.ConvMuteChanged, {
+              muted: becomingMuted,
+            });
+            return next;
           });
         }),
         await listen<ChatToMainEnvelope<{}>>(EVT.OutgoingTyping, (e) => {
@@ -609,8 +715,26 @@ function ChatScreen({
       case "presence":
         upsertUser(msg.user);
         setOnline((prev) => {
+          const wasOnline = prev.some((p) => p.user.id === msg.user.id);
           if (msg.state === "offline") {
+            // Play sign-out sound only on the offline EDGE — once
+            // presence sounds are armed and not for self.
+            if (
+              wasOnline &&
+              presenceSoundsArmedRef.current &&
+              msg.user.id !== session.user.id
+            ) {
+              playSignOut();
+            }
             return prev.filter((p) => p.user.id !== msg.user.id);
+          }
+          // Sign-in sound only on the online EDGE (wasn't in the list).
+          if (
+            !wasOnline &&
+            presenceSoundsArmedRef.current &&
+            msg.user.id !== session.user.id
+          ) {
+            playSignIn();
           }
           const next = prev.filter((p) => p.user.id !== msg.user.id);
           next.push({
@@ -634,6 +758,9 @@ function ChatScreen({
           out.set(msg.conversation.id, msg.conversation);
           return out;
         });
+        // Seed userCache from the conv's members so first messages
+        // render with the right display_name + avatar.
+        for (const m of msg.conversation.members) upsertUser(m);
         // If a chat window happens to be open for this conv (shouldn't
         // be, but be defensive), let it refresh.
         if (openChatsRef.current.has(msg.conversation.id)) {
@@ -699,7 +826,114 @@ function ChatScreen({
             payload,
           );
         }
+        // Soft notification when someone reacts (add only) to one of
+        // my own messages and the conv isn't the focused window.
+        if (msg.action === "add" && msg.user.id !== session.user.id) {
+          const target = messagesRef.current
+            .get(msg.conversation_id)
+            ?.find((m) => m.id === msg.message_id);
+          if (target && target.sender.id === session.user.id) {
+            const isFocused =
+              focusedConvRef.current === msg.conversation_id;
+            if (!isFocused) {
+              playReactionPop();
+              setUnreadByConv((prev) => {
+                const out = new Map(prev);
+                out.set(
+                  msg.conversation_id,
+                  (out.get(msg.conversation_id) ?? 0) + 1,
+                );
+                return out;
+              });
+              if (!openChatsRef.current.has(msg.conversation_id)) {
+                void flashWindowIfUnfocused();
+              }
+            }
+          }
+        }
         return;
+      case "message_edited": {
+        const cid = msg.conversation_id;
+        setMessages((prev) => {
+          const list = prev.get(cid);
+          if (!list) return prev;
+          const next = list.map((m) =>
+            m.id === msg.message_id
+              ? { ...m, body: msg.body, edited_at: msg.edited_at }
+              : m,
+          );
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          const payload: MessageEditedPayload = {
+            message_id: msg.message_id,
+            body: msg.body,
+            edited_at: msg.edited_at,
+          };
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageEdited, payload);
+        }
+        return;
+      }
+      case "message_pinned": {
+        const cid = msg.conversation_id;
+        setPinned((prev) => {
+          const next = new Set<number>(prev.get(cid) ?? []);
+          next.add(msg.message_id);
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          void emitTo(`chat-${cid}`, EVT.IncomingMessagePinned, {
+            message_id: msg.message_id,
+          });
+        }
+        return;
+      }
+      case "message_unpinned": {
+        const cid = msg.conversation_id;
+        setPinned((prev) => {
+          const cur = prev.get(cid);
+          if (!cur) return prev;
+          const next = new Set(cur);
+          next.delete(msg.message_id);
+          const out = new Map(prev);
+          if (next.size === 0) out.delete(cid);
+          else out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageUnpinned, {
+            message_id: msg.message_id,
+          });
+        }
+        return;
+      }
+      case "message_deleted": {
+        const cid = msg.conversation_id;
+        setMessages((prev) => {
+          const list = prev.get(cid);
+          if (!list) return prev;
+          const next = list.map((m) =>
+            m.id === msg.message_id
+              ? { ...m, body: "", deleted_at: msg.deleted_at }
+              : m,
+          );
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          const payload: MessageDeletedPayload = {
+            message_id: msg.message_id,
+            deleted_at: msg.deleted_at,
+          };
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageDeleted, payload);
+        }
+        return;
+      }
       case "read_receipt":
         setReads((prev) => {
           const inner = new Map(prev.get(msg.conversation_id) ?? new Map());
@@ -732,6 +966,9 @@ function ChatScreen({
           out.set(msg.conversation_id, { ...existing, members: msg.members });
           return out;
         });
+        // Each member's UserInfo arrives in the broadcast — fold into
+        // the cache so future renders pick up display_name + avatar.
+        for (const m of msg.members) upsertUser(m);
         if (openChatsRef.current.has(msg.conversation_id)) {
           const payload: MembersChangedPayload = { members: msg.members };
           void emitTo(
@@ -821,6 +1058,9 @@ function ChatScreen({
 
     const isFocused = focusedConvRef.current === m.conversation_id;
     if (isFocused) return;
+
+    // Conv-muted: silent. No badge bump, no flash, no sound.
+    if (mutedConvsRef.current.has(m.conversation_id)) return;
 
     setUnreadByConv((prev) => {
       const out = new Map(prev);
@@ -1153,6 +1393,14 @@ function ChatScreen({
           <button
             type="button"
             className="mute-toggle"
+            onClick={() => setSearchOpen(true)}
+            title="Search messages"
+          >
+            🔍
+          </button>
+          <button
+            type="button"
+            className="mute-toggle"
             onClick={toggleMuted}
             title={muted ? "Unmute sounds" : "Mute sounds"}
           >
@@ -1170,6 +1418,17 @@ function ChatScreen({
           serverUrl={session.serverUrl}
           token={session.token}
           onClose={() => setProfileOpen(false)}
+        />
+      )}
+      {searchOpen && (
+        <SearchModal
+          serverUrl={session.serverUrl}
+          token={session.token}
+          conversations={conversations}
+          userCache={userCache}
+          self={session.user}
+          onJump={(cid) => void openChatWindow(cid)}
+          onClose={() => setSearchOpen(false)}
         />
       )}
 

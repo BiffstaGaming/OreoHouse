@@ -248,6 +248,23 @@ export async function listMessages(
   return body.messages;
 }
 
+// searchMessages calls GET /api/search. q is the FTS5 query (the
+// user types it raw; the server passes it to MATCH). Returns matched
+// MessageViews newest first, scoped to convs the user is a member of.
+export async function searchMessages(
+  serverUrl: string,
+  token: string,
+  q: string,
+): Promise<MessageView[]> {
+  const url = new URL("/api/search", serverUrl);
+  url.searchParams.set("q", q);
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await parseResponse<{ results: MessageView[] }>(resp);
+  return body.results ?? [];
+}
+
 // setMyDisplayName PUTs /api/me/profile and returns the updated
 // UserInfo. Empty string clears the stored display name.
 export async function setMyDisplayName(
@@ -292,15 +309,21 @@ export async function deleteMyAvatar(
 
 // avatarURL builds the cache-busted URL for a user's avatar. Includes
 // the session token because <img src> can't set an Authorization
-// header. Returns null when the user doesn't have an avatar.
+// header. Appends ?v=<avatar_version> so re-uploading an avatar
+// changes the URL and forces the browser to refetch — without that,
+// the server's Cache-Control: max-age=3600 would pin the old image.
+// Returns null when the user doesn't have an avatar.
 export function avatarURL(
   serverUrl: string,
   token: string,
-  user: { id: number; has_avatar?: boolean },
+  user: { id: number; has_avatar?: boolean; avatar_version?: number },
 ): string | null {
   if (!user.has_avatar) return null;
   const url = new URL(`/api/users/${user.id}/avatar`, serverUrl);
   url.searchParams.set("token", token);
+  if (user.avatar_version) {
+    url.searchParams.set("v", String(user.avatar_version));
+  }
   return url.toString();
 }
 

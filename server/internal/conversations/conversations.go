@@ -56,11 +56,15 @@ type RoomSummary struct {
 	MemberCount int
 }
 
-// Member is a row in conversation_members, joined with the user's username
-// for display convenience.
+// Member is a row in conversation_members, joined with the user's
+// username + profile columns. DisplayName / AvatarAttachmentID are
+// populated so REST projections can render the full UserInfo without
+// a second round-trip per member.
 type Member struct {
 	UserID                 int64
 	Username               string
+	DisplayName            string // empty string when NULL
+	AvatarAttachmentID     int64  // 0 when NULL
 	JoinedAt               time.Time
 	LastDeliveredMessageID int64 // 0 when NULL (no message has been delivered yet)
 }
@@ -409,10 +413,13 @@ func (s *Service) ListForUser(ctx context.Context, userID int64) ([]Conversation
 }
 
 // Members returns all members of a conversation, joined with their
-// username for display. Order is undefined.
+// username + profile columns (display_name + avatar_attachment_id) so
+// REST projections can ship full UserInfo per member. Order is
+// undefined.
 func (s *Service) Members(ctx context.Context, conversationID int64) ([]Member, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT m.user_id, u.username, m.joined_at, m.last_delivered_message_id
+        SELECT m.user_id, u.username, u.display_name, u.avatar_attachment_id,
+               m.joined_at, m.last_delivered_message_id
           FROM conversation_members m
           JOIN users u ON u.id = m.user_id
          WHERE m.conversation_id = ?
@@ -428,8 +435,13 @@ func (s *Service) Members(ctx context.Context, conversationID int64) ([]Member, 
 			m             Member
 			joinedAt      string
 			lastDelivered sql.NullInt64
+			displayName   sql.NullString
+			avatarID      sql.NullInt64
 		)
-		if err := rows.Scan(&m.UserID, &m.Username, &joinedAt, &lastDelivered); err != nil {
+		if err := rows.Scan(
+			&m.UserID, &m.Username, &displayName, &avatarID,
+			&joinedAt, &lastDelivered,
+		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		t, err := parseTime(joinedAt)
@@ -439,6 +451,12 @@ func (s *Service) Members(ctx context.Context, conversationID int64) ([]Member, 
 		m.JoinedAt = t
 		if lastDelivered.Valid {
 			m.LastDeliveredMessageID = lastDelivered.Int64
+		}
+		if displayName.Valid {
+			m.DisplayName = displayName.String
+		}
+		if avatarID.Valid {
+			m.AvatarAttachmentID = avatarID.Int64
 		}
 		out = append(out, m)
 	}

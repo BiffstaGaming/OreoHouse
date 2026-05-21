@@ -543,3 +543,96 @@ func TestHandler_UpdatesLastSeenOnDisconnect(t *testing.T) {
 	}
 	t.Fatalf("last_seen_at was not updated within 2s for user %d", alice.ID)
 }
+
+// TestHandler_ReactBroadcastsToOtherMember drives the react flow
+// end-to-end: alice sends a message in a DM, bob reacts to it, and
+// alice receives a reaction event with action="add" + the right emoji.
+func TestHandler_ReactBroadcastsToOtherMember(t *testing.T) {
+	s := newTestStack(t)
+	alice, aliceTok := s.seedUser(t, "alice")
+	bob, bobTok := s.seedUser(t, "bob")
+	convID := s.seedDM(t, alice, bob)
+
+	aliceConn := s.dial(t, aliceTok)
+	bobConn := s.dial(t, bobTok)
+	// Drain welcome + presence(self) on each. Alice ALSO gets a
+	// presence(bob) when bob connects (bob doesn't get one for
+	// alice — alice was already online before bob connected, so
+	// alice's state lives in bob's welcome.online instead of a
+	// presence delta).
+	_, _ = readMessage(t, aliceConn) // alice welcome
+	_, _ = readMessage(t, aliceConn) // alice self-presence
+	_, _ = readMessage(t, bobConn)   // bob welcome
+	_, _ = readMessage(t, bobConn)   // bob self-presence
+	_, _ = readMessage(t, aliceConn) // bob's presence (delivered to alice)
+
+	// Alice sends a message; both receive the broadcast.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	send, _ := json.Marshal(proto.IncomingMessage{
+		Type: proto.TypeMessage, ConversationID: convID, Body: "react to me",
+	})
+	if err := aliceConn.Write(ctx, websocket.MessageText, send); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+	_, raw := readUntilType(t, aliceConn, proto.TypeMessage)
+	var outgoing proto.OutgoingMessage
+	if err := json.Unmarshal(raw, &outgoing); err != nil {
+		t.Fatalf("unmarshal outgoing: %v", err)
+	}
+	_, _ = readUntilType(t, bobConn, proto.TypeMessage)
+
+	// Bob reacts.
+	react, _ := json.Marshal(proto.IncomingReactMessage{
+		Type: proto.TypeReact, MessageID: outgoing.ID, Emoji: "👍",
+	})
+	if err := bobConn.Write(ctx, websocket.MessageText, react); err != nil {
+		t.Fatalf("write react: %v", err)
+	}
+
+	// Alice should receive the reaction broadcast. Bob does too (echo).
+	_, aliceRx := readUntilType(t, aliceConn, proto.TypeReaction)
+	var got proto.ReactionMessage
+	if err := json.Unmarshal(aliceRx, &got); err != nil {
+		t.Fatalf("unmarshal reaction: %v", err)
+	}
+	if got.MessageID != outgoing.ID {
+		t.Errorf("reaction message_id: want %d got %d", outgoing.ID, got.MessageID)
+	}
+	if got.Emoji != "👍" {
+		t.Errorf("reaction emoji: want 👍 got %q", got.Emoji)
+	}
+	if got.Action != "add" {
+		t.Errorf("reaction action: want add got %q", got.Action)
+	}
+	if got.User.ID != bob.ID {
+		t.Errorf("reaction user: want bob (%d) got %d", bob.ID, got.User.ID)
+	}
+
+	// Second react with the same emoji TOGGLES off.
+	if err := bobConn.Write(ctx, websocket.MessageText, react); err != nil {
+		t.Fatalf("write react toggle: %v", err)
+	}
+	_, aliceRx2 := readUntilType(t, aliceConn, proto.TypeReaction)
+	var toggled proto.ReactionMessage
+	if err := json.Unmarshal(aliceRx2, &toggled); err != nil {
+		t.Fatalf("unmarshal toggled: %v", err)
+	}
+	if toggled.Action != "remove" {
+		t.Errorf("toggle action: want remove got %q", toggled.Action)
+	}
+}
+
+// readUntilType reads from c until it finds a frame whose envelope
+// "type" matches typeWant, dropping anything else. 3s timeout.
+func readUntilType(t *testing.T, c *websocket.Conn, typeWant string) (string, []byte) {
+	t.Helper()
+	for i := 0; i < 30; i++ {
+		typ, raw := readMessage(t, c)
+		if typ == typeWant {
+			return typ, raw
+		}
+	}
+	t.Fatalf("never saw %q within 30 frames", typeWant)
+	return "", nil
+}

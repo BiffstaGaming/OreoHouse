@@ -78,6 +78,16 @@ type ReactionGroup struct {
 	UserIDs []int64 `json:"user_ids"`
 }
 
+// ReplySnippet is a tiny preview of a quoted message, embedded under
+// MessageView.ReplyTo so the client can render the quote header
+// without a second fetch. Body is truncated by the server.
+type ReplySnippet struct {
+	ID       int64    `json:"id"`
+	Sender   UserInfo `json:"sender"`
+	Body     string   `json:"body"`
+	Deleted  bool     `json:"deleted,omitempty"`
+}
+
 // MessageView is the JSON projection of a message.
 type MessageView struct {
 	ID             int64            `json:"id"`
@@ -85,8 +95,12 @@ type MessageView struct {
 	Sender         UserInfo         `json:"sender"`
 	Body           string           `json:"body"`
 	CreatedAt      string           `json:"created_at"`
+	EditedAt       string           `json:"edited_at,omitempty"`
+	DeletedAt      string           `json:"deleted_at,omitempty"`
 	Attachments    []AttachmentView `json:"attachments,omitempty"`
 	Reactions      []ReactionGroup  `json:"reactions,omitempty"`
+	// ReplyTo is non-nil iff this message is a quote of another.
+	ReplyTo *ReplySnippet `json:"reply_to,omitempty"`
 }
 
 // ListMessagesResponse is the body of GET /api/conversations/{id}/messages.
@@ -94,4 +108,22 @@ type MessageView struct {
 // is the cursor for the next "before=" call.
 type ListMessagesResponse struct {
 	Messages []MessageView `json:"messages"`
+}
+
+// SearchResponse is the body of GET /api/search.
+type SearchResponse struct {
+	Results []MessageView `json:"results"`
+}
+
+// PinView is one pinned message — the full MessageView plus the pin
+// timestamp and the user who pinned it.
+type PinView struct {
+	Message  MessageView `json:"message"`
+	PinnedBy UserInfo    `json:"pinned_by"`
+	PinnedAt string      `json:"pinned_at"`
+}
+
+// ListPinsResponse is the body of GET /api/conversations/{id}/pins.
+type ListPinsResponse struct {
+	Pins []PinView `json:"pins"`
 }

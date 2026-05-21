@@ -107,6 +107,7 @@ func runServe(args []string) error {
 	profileHandler := api.NewProfileHandler(authSvc, attachmentsSvc, hub)
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
 	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))
+	searchHandler := api.NewSearchHandler(authSvc, convsSvc, msgsSvc)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)
@@ -136,6 +137,7 @@ func runServe(args []string) error {
 	profileHandler.Mount(r)
 	convsHandler.Mount(r)
 	filesHandler.Mount(r)
+	searchHandler.Mount(r)
 	// Embedded admin web UI. Redirect the bare /admin to /admin/ so the
 	// page's relative ./app.js + ./style.css references resolve.
 	r.Handle("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))

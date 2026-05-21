@@ -583,6 +583,25 @@ button:disabled {
   animation: shake 700ms cubic-bezier(.36, .07, .19, .97);
 }
 
+/* Drag-and-drop highlight when a file is hovered over the chat
+   window. The whole body gets a blue glow + dashed inset border. */
+.chat-window-app.drag-over::after {
+  content: "Drop to attach";
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--msn-blue);
+  border-radius: 8px;
+  background: rgba(74, 141, 232, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--msn-blue-dark);
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+.chat-window-app { position: relative; }
+
 .chat-window-app-header {
   display: flex;
   align-items: center;
@@ -839,6 +858,13 @@ button:disabled {
 .emoji-picker-glyph:hover {
   background: rgba(74, 141, 232, 0.18);
 }
+.emoji-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--msn-text-muted);
+  padding: 1rem 0;
+}
 
 .composer-emoji-wrap {
   position: relative;
@@ -862,20 +888,27 @@ button:disabled {
   flex-direction: column;
 }
 
-/* Inline hover toolbar for quick reactions + "more". */
+/* Inline hover toolbar for quick reactions + "more".
+ *
+ * Anchored to the top-right of the bubble and offset up by 50% of its
+ * height — sits half-on-half-off the bubble so it never overlaps the
+ * previous message's content. Hidden by default; shown only when the
+ * .msg-row is hovered. */
 .msg-toolbar {
   position: absolute;
-  right: 0.2rem;
-  top: -1rem;
+  right: 0.5rem;
+  top: 0;
+  transform: translateY(-55%);
   display: none;
   background: var(--msn-bg-soft);
   border: 1px solid var(--msn-border);
   border-radius: 999px;
   padding: 0.1rem 0.25rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   gap: 0.05rem;
+  z-index: 5;
 }
-.msg:hover .msg-toolbar {
+.msg-row:hover .msg-toolbar {
   display: inline-flex;
 }
 .msg-toolbar-btn {
@@ -889,11 +922,157 @@ button:disabled {
 .msg-toolbar-btn:hover {
   background: rgba(74, 141, 232, 0.22);
 }
+/* Picker opened from the hover toolbar's "⊕" button. Anchored
+ * relative to the toolbar; grows DOWN by default but flips above when
+ * .flip-up is set by the runtime collision check in MessageRow. */
 .msg-toolbar-picker {
   position: absolute;
   top: 100%;
   right: 0;
   margin-top: 4px;
+  z-index: 10;
+}
+.msg-toolbar-picker.flip-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+/* --- Edited / deleted markers + reply quote --- */
+.msg-edited {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  opacity: 0.65;
+}
+.msg-deleted {
+  font-style: italic;
+  opacity: 0.55;
+}
+.msg-quote {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem;
+  margin-bottom: 0.3rem;
+  background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid var(--msn-blue-light);
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  overflow: hidden;
+}
+.msg-quote-arrow {
+  opacity: 0.65;
+}
+.msg-quote-sender {
+  font-weight: 600;
+}
+.msg-quote-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Edit / delete toolbar buttons share msg-toolbar-btn styles; the
+ * danger modifier turns the trash red on hover. */
+.msg-toolbar-btn.danger:hover {
+  background: rgba(181, 61, 61, 0.18);
+}
+
+/* Composer "Replying to" / "Editing" pill above the input. */
+.composer-context {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+  border-top: 1px solid var(--msn-border-soft);
+  background: rgba(74, 141, 232, 0.08);
+}
+.composer-context.editing {
+  background: rgba(255, 213, 79, 0.16);
+}
+.composer-context button {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: inherit;
+  padding: 0 0.25rem;
+}
+.composer-context-quote {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Search modal --- */
+.search-modal {
+  width: min(40rem, 100%);
+}
+.search-input {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  font-size: 1rem;
+  border: 1px solid var(--msn-border);
+  border-radius: 4px;
+  background: white;
+  color: var(--msn-text);
+  margin-bottom: 0.6rem;
+}
+.search-input:focus {
+  outline: none;
+  border-color: var(--msn-blue-light);
+  box-shadow: 0 0 0 2px rgba(74, 141, 232, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .search-input {
+    background: #1a2233;
+    border-color: var(--msn-border);
+  }
+}
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.search-result {
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+  cursor: pointer;
+}
+.search-result:hover {
+  background: rgba(74, 141, 232, 0.08);
+}
+.search-result-meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--msn-text-muted);
+  margin-bottom: 0.2rem;
+}
+.search-result-conv {
+  font-weight: 600;
+  color: var(--msn-blue-dark);
+}
+.search-result-time {
+  margin-left: auto;
+}
+.search-result-body {
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* --- Reaction pills under message bubbles --- */
@@ -1071,6 +1250,35 @@ button:disabled {
   max-height: 18rem;
   border-radius: 0.3rem;
   border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+/* Wrap the inline thumbnail in a borderless button so it's keyboard-
+   accessible without affecting visual styling. */
+.msg-image-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+/* Full-window lightbox shown on image click. Click the backdrop to
+   close; clicking the <img> is stopPropagation'd. */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  cursor: zoom-out;
+}
+.image-lightbox-img {
+  max-width: 96vw;
+  max-height: 96vh;
+  cursor: default;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
 }
 
 .msg-file {

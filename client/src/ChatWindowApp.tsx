@@ -26,6 +26,8 @@ import {
   type ConversationView,
   type HydratePayload,
   type MessagePayload,
+  type MessageDeletedPayload,
+  type MessageEditedPayload,
   type MembersChangedPayload,
   type ConvUpdatedPayload,
   type MessageView,
@@ -33,6 +35,7 @@ import {
   type ReactionGroup,
   type ReactionPayload,
   type ReadReceiptPayload,
+  type ReplySnippet,
   type SessionSnapshot,
   type TypingPayload,
   type UserInfo,
@@ -41,6 +44,7 @@ import {
 import { Avatar } from "./components/Avatar";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { QUICK_REACTIONS } from "./lib/emoji";
+import { expandSlashCommand } from "./lib/slashCommands";
 import { displayNameOf } from "./lib/users";
 
 import "./App.css";
@@ -63,6 +67,10 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   >(new Map());
   const [shaking, setShaking] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [convMuted, setConvMuted] = useState(false);
+  // Set of message ids pinned in this conversation. Hydrated from
+  // the initial payload + kept fresh by IncomingMessage{Un,}Pinned.
+  const [pinned, setPinned] = useState<Set<number>>(new Set());
   // user_id → highest message_id they've read in this conversation.
   const [reads, setReads] = useState<Map<number, number>>(new Map());
   // message_id → reaction groups for that message.
@@ -79,6 +87,8 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   sessionRef.current = session;
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const convMutedRef = useRef(convMuted);
+  convMutedRef.current = convMuted;
 
   // ---- IPC: subscribe + announce ready ------------------------------
 
@@ -108,6 +118,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
             );
             setMuted(e.payload.muted);
+            setConvMuted(e.payload.conv_muted);
             const reads = new Map<number, number>();
             for (const [uid, lr] of Object.entries(e.payload.reads ?? {})) {
               reads.set(Number(uid), lr);
@@ -120,6 +131,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               rxs.set(Number(mid), groups);
             }
             setReactions(rxs);
+            setPinned(new Set(e.payload.pinned ?? []));
             // Seed userCache from conv members + each message's sender.
             const uc = new Map<number, UserInfo>();
             uc.set(e.payload.session.user.id, e.payload.session.user);
@@ -144,7 +156,12 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               return next;
             });
             const me = sessionRef.current;
-            if (me && m.sender.id !== me.user.id && !mutedRef.current) {
+            if (
+              me &&
+              m.sender.id !== me.user.id &&
+              !mutedRef.current &&
+              !convMutedRef.current
+            ) {
               playMessageBlip();
             }
           },
@@ -198,6 +215,13 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           },
           opts,
         ),
+        await listen<{ muted: boolean }>(
+          EVT.ConvMuteChanged,
+          (e) => {
+            setConvMuted(e.payload.muted);
+          },
+          opts,
+        ),
         await listen<ReadReceiptPayload>(
           EVT.IncomingReadReceipt,
           (e) => {
@@ -229,6 +253,56 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
                 out.set(e.payload.message_id, next);
               }
               return out;
+            });
+          },
+          opts,
+        ),
+        await listen<MessageEditedPayload>(
+          EVT.IncomingMessageEdited,
+          (e) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === e.payload.message_id
+                  ? { ...m, body: e.payload.body, edited_at: e.payload.edited_at }
+                  : m,
+              ),
+            );
+          },
+          opts,
+        ),
+        await listen<MessageDeletedPayload>(
+          EVT.IncomingMessageDeleted,
+          (e) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === e.payload.message_id
+                  ? { ...m, body: "", deleted_at: e.payload.deleted_at }
+                  : m,
+              ),
+            );
+          },
+          opts,
+        ),
+        await listen<{ message_id: number }>(
+          EVT.IncomingMessagePinned,
+          (e) => {
+            setPinned((prev) => {
+              if (prev.has(e.payload.message_id)) return prev;
+              const next = new Set(prev);
+              next.add(e.payload.message_id);
+              return next;
+            });
+          },
+          opts,
+        ),
+        await listen<{ message_id: number }>(
+          EVT.IncomingMessageUnpinned,
+          (e) => {
+            setPinned((prev) => {
+              if (!prev.has(e.payload.message_id)) return prev;
+              const next = new Set(prev);
+              next.delete(e.payload.message_id);
+              return next;
             });
           },
           opts,
@@ -339,6 +413,8 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
       reads={reads}
       reactions={reactions}
       userCache={userCache}
+      convMuted={convMuted}
+      pinned={pinned}
     />
   );
 }
@@ -381,6 +457,8 @@ function ChatBody({
   reads,
   reactions,
   userCache,
+  convMuted,
+  pinned,
 }: {
   session: SessionSnapshot;
   conv: ConversationView;
@@ -391,11 +469,20 @@ function ChatBody({
   reads: Map<number, number>;
   reactions: Map<number, ReactionGroup[]>;
   userCache: Map<number, UserInfo>;
+  convMuted: boolean;
+  pinned: Set<number>;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [nudgeCooldown, setNudgeCooldown] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // Editing state: when non-null, the composer replaces "send" with
+  // "save edit" and operates on this message id instead of creating
+  // a new one.
+  const [editing, setEditing] = useState<MessageView | null>(null);
+  // Reply target: when non-null, the composer shows a quote pill and
+  // outgoing messages are sent with reply_to_id set.
+  const [replyTarget, setReplyTarget] = useState<MessageView | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -411,6 +498,49 @@ function ChatBody({
     },
     [convID],
   );
+
+  const sendEditOut = useCallback(
+    (messageID: number, body: string) => {
+      void emit(EVT.OutgoingEdit, {
+        conversation_id: convID,
+        message_id: messageID,
+        body,
+      });
+    },
+    [convID],
+  );
+
+  const sendDeleteOut = useCallback(
+    (messageID: number) => {
+      void emit(EVT.OutgoingDelete, {
+        conversation_id: convID,
+        message_id: messageID,
+      });
+    },
+    [convID],
+  );
+
+  function startEdit(m: MessageView) {
+    setEditing(m);
+    setReplyTarget(null);
+    setDraft(m.body);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setDraft("");
+  }
+
+  function startReply(m: MessageView) {
+    setReplyTarget(m);
+    setEditing(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function cancelReply() {
+    setReplyTarget(null);
+  }
 
   function insertEmojiInDraft(glyph: string) {
     const el = inputRef.current;
@@ -436,11 +566,12 @@ function ChatBody({
   }, [messages]);
 
   const sendOut = useCallback(
-    (body: string, attachmentIDs?: number[]) => {
+    (body: string, attachmentIDs?: number[], replyToID?: number) => {
       void emit(EVT.Send, {
         conversation_id: convID,
         body,
         attachment_ids: attachmentIDs,
+        reply_to_id: replyToID,
       });
     },
     [convID],
@@ -510,19 +641,88 @@ function ChatBody({
     setPending((p) => p.filter((x) => x.localID !== localID));
   }
 
+  // Drag-and-drop: dropping files anywhere in the chat-window body
+  // routes them through the same upload flow as the paperclip.
+  const [dragOver, setDragOver] = useState(false);
+  function onDragOver(e: React.DragEvent<HTMLElement>) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }
+  function onDragLeave(e: React.DragEvent<HTMLElement>) {
+    if (e.currentTarget === e.target) setDragOver(false);
+  }
+  function onDrop(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      void handleFiles(e.dataTransfer.files);
+    }
+  }
+
+  // Paste handler — clipboard images go straight into the upload queue.
+  // Text pastes are left alone (caller's default paste behaviour).
+  function onPaste(e: React.ClipboardEvent<HTMLElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      void handleFiles(dt.files);
+    }
+  }
+
   function trySend() {
-    const body = draft.trim();
-    if (!body && readyIDs.length === 0) return;
+    let body = draft.trim();
     if (uploading) return;
-    sendOut(body, readyIDs.length > 0 ? readyIDs : undefined);
+    // Editing path: send an edit instead of a new message.
+    if (editing) {
+      if (!body) return;
+      // Re-run slash expansion on edits too so users can /shrug a
+      // typo-fix into shape.
+      body = expandSlashCommand(body).body;
+      sendEditOut(editing.id, body);
+      cancelEdit();
+      return;
+    }
+    if (!body && readyIDs.length === 0) return;
+    // Slash commands run before the network hop. Unrecognised ones
+    // pass through unchanged (handled=false).
+    if (body) body = expandSlashCommand(body).body;
+    sendOut(
+      body,
+      readyIDs.length > 0 ? readyIDs : undefined,
+      replyTarget?.id,
+    );
     setDraft("");
     setPending((p) => p.filter((x) => x.kind === "uploading"));
+    setReplyTarget(null);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       trySend();
+      return;
+    }
+    if (e.key === "Escape") {
+      if (editing) {
+        e.preventDefault();
+        cancelEdit();
+      } else if (replyTarget) {
+        e.preventDefault();
+        cancelReply();
+      }
     }
   }
 
@@ -530,7 +730,13 @@ function ChatBody({
   const subtitle = conversationSubtitle(conv, session.user.id);
 
   return (
-    <main className={`phase6 chat-window-app ${shaking ? "shaking" : ""}`}>
+    <main
+      className={`phase6 chat-window-app ${shaking ? "shaking" : ""} ${dragOver ? "drag-over" : ""}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onPaste={onPaste}
+    >
       <header className="chat-window-app-header">
         <div className="chat-window-titles">
           <span className="chat-window-title">{title}</span>
@@ -539,6 +745,16 @@ function ChatBody({
           )}
         </div>
         <div className="chat-window-buttons">
+          <button
+            type="button"
+            className="chat-window-button"
+            title={convMuted ? "Unmute conversation" : "Mute conversation"}
+            onClick={() =>
+              void emit(EVT.ToggleConvMute, { conversation_id: convID })
+            }
+          >
+            {convMuted ? "🔕" : "🔔"}
+          </button>
           <button
             type="button"
             className="chat-window-button"
@@ -576,7 +792,22 @@ function ChatBody({
               reads={reads}
               reactions={reactions.get(m.id) ?? []}
               userCache={userCache}
+              isPinned={pinned.has(m.id)}
               onReact={(emoji) => sendReact(m.id, emoji)}
+              onReply={() => startReply(m)}
+              onEdit={() => startEdit(m)}
+              onDelete={() => {
+                if (confirm("Delete this message?")) sendDeleteOut(m.id);
+              }}
+              onTogglePin={() => {
+                void emit(
+                  pinned.has(m.id) ? EVT.OutgoingUnpin : EVT.OutgoingPin,
+                  {
+                    conversation_id: convID,
+                    message_id: m.id,
+                  },
+                );
+              }}
             />
           ))
         )}
@@ -588,6 +819,28 @@ function ChatBody({
         </div>
       )}
 
+      {editing && (
+        <div className="composer-context editing">
+          <span>
+            Editing message — press <kbd>Esc</kbd> to cancel
+          </span>
+          <button type="button" onClick={cancelEdit}>
+            ×
+          </button>
+        </div>
+      )}
+      {!editing && replyTarget && (
+        <div className="composer-context replying">
+          <span className="composer-context-quote">
+            Replying to{" "}
+            <strong>{displayNameOf(userCache.get(replyTarget.sender.id) ?? replyTarget.sender)}</strong>
+            : {truncate(replyTarget.body || "(attachment)", 80)}
+          </span>
+          <button type="button" onClick={cancelReply}>
+            ×
+          </button>
+        </div>
+      )}
       {pending.length > 0 && (
         <div className="composer-pending">
           {pending.map((p) => (
@@ -668,7 +921,7 @@ function ChatBody({
           type="submit"
           disabled={uploading || (!draft.trim() && readyIDs.length === 0)}
         >
-          {uploading ? "…" : "Send"}
+          {uploading ? "…" : editing ? "Save" : "Send"}
         </button>
       </form>
     </main>
@@ -685,7 +938,12 @@ function MessageRow({
   reads,
   reactions,
   userCache,
+  isPinned,
   onReact,
+  onReply,
+  onEdit,
+  onDelete,
+  onTogglePin,
 }: {
   m: MessageView;
   session: SessionSnapshot;
@@ -693,11 +951,38 @@ function MessageRow({
   reads: Map<number, number>;
   reactions: ReactionGroup[];
   userCache: Map<number, UserInfo>;
+  isPinned: boolean;
   onReact: (emoji: string) => void;
+  onReply: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onTogglePin: () => void;
 }) {
   const mine = m.sender.id === session.user.id;
   const sender = userCache.get(m.sender.id) ?? m.sender;
+  const isDeleted = !!m.deleted_at;
+  const isEdited = !!m.edited_at;
+  // Edit window is 15 min — match the server. We don't block clicks
+  // past the window (server enforces), but greying out is gentler.
+  const editable =
+    mine &&
+    !isDeleted &&
+    Date.now() - new Date(m.created_at).getTime() < 15 * 60 * 1000;
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFlipUp, setPickerFlipUp] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+
+  // Open picker — flip upward if there isn't enough room below.
+  function openPicker() {
+    const tb = toolbarRef.current;
+    if (tb) {
+      const rect = tb.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // EmojiPicker is ~280 px tall when fully expanded.
+      setPickerFlipUp(spaceBelow < 300);
+    }
+    setPickerOpen(true);
+  }
   return (
     <div className={`msg ${mine ? "msg-mine" : ""}`}>
       <div className="msg-row">
@@ -711,13 +996,28 @@ function MessageRow({
           />
         )}
         <div className="msg-bubble">
+          {m.reply_to && (
+            <ReplyQuote snippet={m.reply_to} userCache={userCache} />
+          )}
           <div className="msg-meta">
             <span className="msg-sender">
               {mine ? "you" : displayNameOf(sender)}
             </span>
+            {isPinned && (
+              <span className="msg-pinned-badge" title="Pinned">
+                📌
+              </span>
+            )}
             <span className="msg-time">{formatTime(m.created_at)}</span>
           </div>
-          {m.body && <div className="msg-body">{m.body}</div>}
+          {isDeleted ? (
+            <div className="msg-body msg-deleted">this message was deleted</div>
+          ) : m.body ? (
+            <div className="msg-body">
+              {m.body}
+              {isEdited && <span className="msg-edited"> (edited)</span>}
+            </div>
+          ) : null}
           {m.attachments && m.attachments.length > 0 && (
             <div className="msg-attachments">
               {m.attachments.map((a) => (
@@ -728,7 +1028,7 @@ function MessageRow({
           {reactions.length > 0 && (
             <div className="msg-reactions">
               {reactions.map((g) => {
-                const mine = g.user_ids.includes(session.user.id);
+                const isMyReaction = g.user_ids.includes(session.user.id);
                 const names = g.user_ids
                   .map((uid) => userCache.get(uid))
                   .filter((u): u is UserInfo => u !== undefined)
@@ -738,7 +1038,7 @@ function MessageRow({
                   <button
                     key={g.emoji}
                     type="button"
-                    className={`msg-reaction ${mine ? "mine" : ""}`}
+                    className={`msg-reaction ${isMyReaction ? "mine" : ""}`}
                     title={names || `${g.user_ids.length} reactions`}
                     onClick={() => onReact(g.emoji)}
                   >
@@ -753,28 +1053,75 @@ function MessageRow({
             <ReadTicks m={m} conv={conv} reads={reads} self={session.user} />
           )}
         </div>
-        <div className="msg-toolbar">
-          {QUICK_REACTIONS.map((emoji) => (
+        <div className="msg-toolbar" ref={toolbarRef}>
+          {!isDeleted &&
+            QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className="msg-toolbar-btn"
+                title={`React with ${emoji}`}
+                onClick={() => onReact(emoji)}
+              >
+                {emoji}
+              </button>
+            ))}
+          {!isDeleted && (
             <button
-              key={emoji}
               type="button"
               className="msg-toolbar-btn"
-              title={`React with ${emoji}`}
-              onClick={() => onReact(emoji)}
+              title="More reactions"
+              onClick={() =>
+                pickerOpen ? setPickerOpen(false) : openPicker()
+              }
             >
-              {emoji}
+              ⊕
             </button>
-          ))}
-          <button
-            type="button"
-            className="msg-toolbar-btn"
-            title="More reactions"
-            onClick={() => setPickerOpen((v) => !v)}
-          >
-            ⊕
-          </button>
+          )}
+          {!isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title="Reply"
+              onClick={onReply}
+            >
+              ↩
+            </button>
+          )}
+          {editable && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title="Edit (15 min window)"
+              onClick={onEdit}
+            >
+              ✏️
+            </button>
+          )}
+          {!isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title={isPinned ? "Unpin from conversation" : "Pin to conversation"}
+              onClick={onTogglePin}
+            >
+              {isPinned ? "📍" : "📌"}
+            </button>
+          )}
+          {mine && !isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn danger"
+              title="Delete"
+              onClick={onDelete}
+            >
+              🗑
+            </button>
+          )}
           {pickerOpen && (
-            <div className="msg-toolbar-picker">
+            <div
+              className={`msg-toolbar-picker ${pickerFlipUp ? "flip-up" : ""}`}
+            >
               <EmojiPicker
                 onPick={(glyph) => {
                   onReact(glyph);
@@ -836,6 +1183,33 @@ function ReadTicks({
   );
 }
 
+// ReplyQuote renders the small "↪ Alice: short preview…" header at
+// the top of a reply bubble. If the original was deleted the body is
+// suppressed and we just render the tomb-stoned hint.
+function ReplyQuote({
+  snippet,
+  userCache,
+}: {
+  snippet: ReplySnippet;
+  userCache: Map<number, UserInfo>;
+}) {
+  const sender = userCache.get(snippet.sender.id) ?? snippet.sender;
+  return (
+    <div className="msg-quote" title={snippet.deleted ? "Deleted message" : snippet.body}>
+      <span className="msg-quote-arrow">↪</span>
+      <span className="msg-quote-sender">{displayNameOf(sender)}</span>
+      <span className="msg-quote-body">
+        {snippet.deleted ? "(deleted message)" : truncate(snippet.body, 80)}
+      </span>
+    </div>
+  );
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
 function AttachmentRender({
   a,
   session,
@@ -844,17 +1218,32 @@ function AttachmentRender({
   session: SessionSnapshot;
 }) {
   const url = fileURL(session.serverUrl, session.token, a.id);
+  const [lightbox, setLightbox] = useState(false);
   if (a.mime_type.startsWith("image/")) {
     return (
-      <a
-        className="msg-image-link"
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
-      >
-        <img className="msg-image" src={url} alt={a.filename} loading="lazy" />
-      </a>
+      <>
+        <button
+          type="button"
+          className="msg-image-link"
+          onClick={() => setLightbox(true)}
+          title={`${a.filename} (${formatBytes(a.size_bytes)})`}
+        >
+          <img
+            className="msg-image"
+            src={url}
+            alt={a.filename}
+            loading="lazy"
+            draggable={false}
+          />
+        </button>
+        {lightbox && (
+          <ImageLightbox
+            url={url}
+            alt={a.filename}
+            onClose={() => setLightbox(false)}
+          />
+        )}
+      </>
     );
   }
   return (
@@ -863,6 +1252,38 @@ function AttachmentRender({
       <span className="msg-file-name">{a.filename}</span>
       <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
     </a>
+  );
+}
+
+// ImageLightbox — full-window image viewer for inline attachments.
+// Escape or click on the backdrop closes; click on the image itself
+// is absorbed so users don't accidentally dismiss while panning.
+function ImageLightbox({
+  url,
+  alt,
+  onClose,
+}: {
+  url: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="image-lightbox" onClick={onClose}>
+      <img
+        src={url}
+        alt={alt}
+        className="image-lightbox-img"
+        onClick={(e) => e.stopPropagation()}
+        draggable={false}
+      />
+    </div>
   );
 }
 

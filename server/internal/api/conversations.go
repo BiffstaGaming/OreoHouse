@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -79,6 +80,7 @@ func (h *ConversationsHandler) Mount(r chi.Router) {
 		r.Post("/api/conversations/{id}/members", h.addMembers)
 		r.Post("/api/conversations/{id}/leave", h.leave)
 		r.Get("/api/conversations/{id}/messages", h.listMessages)
+		r.Get("/api/conversations/{id}/pins", h.listPins)
 		r.Get("/api/rooms", h.listRooms)
 		r.Post("/api/rooms/{id}/join", h.joinRoom)
 	})
@@ -208,9 +210,82 @@ func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Reque
 		view := messageToView(m, members)
 		view.Attachments = attachmentsToViews(attsByMsg[m.ID])
 		view.Reactions = reactionsByMsg[m.ID]
+		if m.ReplyToID > 0 {
+			view.ReplyTo = h.buildReplySnippet(r.Context(), m.ReplyToID, members)
+		}
 		out[i] = view
 	}
 	writeJSON(w, http.StatusOK, proto.ListMessagesResponse{Messages: out})
+}
+
+// listPins handles GET /api/conversations/{id}/pins. Returns each
+// pinned message hydrated with its sender + body (using the same
+// member-cache pattern as listMessages). Newest pin first.
+func (h *ConversationsHandler) listPins(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.requireMembership(w, r, convID, me.ID); err != nil {
+		return
+	}
+	pins, err := h.messages.ListPins(r.Context(), convID)
+	if err != nil {
+		slog.Error("list pins failed", "error", err, "conv_id", convID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	members, err := h.convs.Members(r.Context(), convID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]proto.PinView, 0, len(pins))
+	for _, p := range pins {
+		msg, err := h.messages.Get(r.Context(), p.MessageID)
+		if err != nil {
+			// Pin row got orphaned by ON DELETE CASCADE; skip.
+			continue
+		}
+		out = append(out, proto.PinView{
+			Message:  messageToView(msg, members),
+			PinnedBy: senderInfo(p.PinnedBy, members),
+			PinnedAt: p.PinnedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	writeJSON(w, http.StatusOK, proto.ListPinsResponse{Pins: out})
+}
+
+// buildReplySnippet — REST-side variant of the WS handler's helper.
+// Returns nil on lookup failure so the client falls back to "(replied
+// to a deleted message)" gracefully when reply_to_id dangles after a
+// delete cascade.
+func (h *ConversationsHandler) buildReplySnippet(
+	ctx context.Context, replyToID int64, members []conversations.Member,
+) *proto.ReplySnippet {
+	if replyToID <= 0 {
+		return nil
+	}
+	parent, err := h.messages.Get(ctx, replyToID)
+	if err != nil {
+		return nil
+	}
+	const previewBytes = 160
+	body := parent.Body
+	deleted := !parent.DeletedAt.IsZero()
+	if deleted {
+		body = ""
+	}
+	if len(body) > previewBytes {
+		body = body[:previewBytes]
+	}
+	return &proto.ReplySnippet{
+		ID:      parent.ID,
+		Sender:  senderInfo(parent.SenderID, members),
+		Body:    body,
+		Deleted: deleted,
+	}
 }
 
 // groupReactions folds a flat list of (message, user, emoji) rows
@@ -639,23 +714,26 @@ func parseIDParam(w http.ResponseWriter, r *http.Request, key string) (int64, bo
 }
 
 func messageToView(m messages.Message, members []conversations.Member) proto.MessageView {
-	return proto.MessageView{
+	v := proto.MessageView{
 		ID:             m.ID,
 		ConversationID: m.ConversationID,
 		Sender:         senderInfo(m.SenderID, members),
 		Body:           m.Body,
 		CreatedAt:      m.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if !m.EditedAt.IsZero() {
+		v.EditedAt = m.EditedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !m.DeletedAt.IsZero() {
+		v.DeletedAt = m.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return v
 }
 
 func senderInfo(senderID int64, members []conversations.Member) proto.UserInfo {
 	for _, mm := range members {
 		if mm.UserID == senderID {
-			return proto.UserInfo{
-				ID:        mm.UserID,
-				Username:  mm.Username,
-				CreatedAt: "",
-			}
+			return memberToUserInfo(mm)
 		}
 	}
 	// Sender no longer a member (left, deleted). Return a best-effort
@@ -666,9 +744,24 @@ func senderInfo(senderID int64, members []conversations.Member) proto.UserInfo {
 func membersToUserInfos(members []conversations.Member) []proto.UserInfo {
 	out := make([]proto.UserInfo, len(members))
 	for i, m := range members {
-		out[i] = proto.UserInfo{ID: m.UserID, Username: m.Username, CreatedAt: ""}
+		out[i] = memberToUserInfo(m)
 	}
 	return out
+}
+
+// memberToUserInfo flattens a conversations.Member into the public
+// UserInfo wire shape. CreatedAt isn't carried on Members (the column
+// isn't joined) so it's left empty — clients fall back to whatever
+// they have cached via presence / welcome.
+func memberToUserInfo(m conversations.Member) proto.UserInfo {
+	return proto.UserInfo{
+		ID:            m.UserID,
+		Username:      m.Username,
+		CreatedAt:     "",
+		DisplayName:   m.DisplayName,
+		HasAvatar:     m.AvatarAttachmentID > 0,
+		AvatarVersion: m.AvatarAttachmentID,
+	}
 }
 
 // decodeConvJSON is a smaller variant of decodeJSON tuned for these

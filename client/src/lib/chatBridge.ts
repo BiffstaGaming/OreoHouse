@@ -15,6 +15,7 @@ import type {
   ConversationView,
   MessageView,
   ReactionGroup,
+  ReplySnippet,
   UserInfo,
 } from "../types/proto";
 
@@ -38,6 +39,10 @@ export type HydratePayload = {
   // Initial muted-sound preference (so we don't have to share
   // localStorage races with the main window).
   muted: boolean;
+  // True when THIS conversation has been individually muted by the
+  // user. Server-side messages still arrive, but the chat window
+  // suppresses its blip + flash and main suppresses the badge bump.
+  conv_muted: boolean;
   // Initial read-state map for this conversation: user_id →
   // last_read_message_id. Hydrated from welcome.reads + any live
   // read_receipt events that arrived before the window opened.
@@ -45,6 +50,8 @@ export type HydratePayload = {
   // Initial per-message reaction summary for the conversation's
   // loaded history. Keyed by message_id.
   reactions: Record<number, ReactionGroup[]>;
+  // Initial set of pinned message ids in this conversation.
+  pinned: number[];
 };
 
 export type MessagePayload = {
@@ -95,11 +102,32 @@ export type UserUpdatedPayload = {
 export type SendPayload = {
   body: string;
   attachment_ids?: number[];
+  reply_to_id?: number;
 };
 
 export type OutgoingReactPayload = {
   message_id: number;
   emoji: string;
+};
+
+export type OutgoingEditPayload = {
+  message_id: number;
+  body: string;
+};
+
+export type OutgoingDeletePayload = {
+  message_id: number;
+};
+
+export type MessageEditedPayload = {
+  message_id: number;
+  body: string;
+  edited_at: string;
+};
+
+export type MessageDeletedPayload = {
+  message_id: number;
+  deleted_at: string;
 };
 
 // ---- event names ----------------------------------------------------
@@ -119,16 +147,26 @@ export const EVT = {
   IncomingNudge: "oreo:chat:nudge",
   IncomingReadReceipt: "oreo:chat:read_receipt",
   IncomingReaction: "oreo:chat:reaction",
+  IncomingMessageEdited: "oreo:chat:message_edited",
+  IncomingMessageDeleted: "oreo:chat:message_deleted",
+  IncomingMessagePinned: "oreo:chat:message_pinned",
+  IncomingMessageUnpinned: "oreo:chat:message_unpinned",
   UserUpdated: "oreo:chat:user_updated",
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
   MutedChanged: "oreo:chat:muted_changed",
+  ConvMuteChanged: "oreo:chat:conv_mute_changed",
   // chat → main (plain emit, conv id is in the payload)
   Ready: "oreo:chat:ready",
   Send: "oreo:chat:send",
   OutgoingTyping: "oreo:chat:typing_out",
   OutgoingNudge: "oreo:chat:nudge_out",
   OutgoingReact: "oreo:chat:react_out",
+  OutgoingEdit: "oreo:chat:edit_out",
+  OutgoingDelete: "oreo:chat:delete_out",
+  OutgoingPin: "oreo:chat:pin_out",
+  OutgoingUnpin: "oreo:chat:unpin_out",
+  ToggleConvMute: "oreo:chat:toggle_conv_mute",
   Focused: "oreo:chat:focused",
   Leave: "oreo:chat:leave",
 } as const;
@@ -156,5 +194,6 @@ export type {
   ConversationView,
   MessageView,
   ReactionGroup,
+  ReplySnippet,
   UserInfo,
 };
