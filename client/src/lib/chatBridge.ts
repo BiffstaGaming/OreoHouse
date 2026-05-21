@@ -14,6 +14,7 @@ import type {
   AttachmentView,
   ConversationView,
   MessageView,
+  ReactionGroup,
   UserInfo,
 } from "../types/proto";
 
@@ -41,6 +42,9 @@ export type HydratePayload = {
   // last_read_message_id. Hydrated from welcome.reads + any live
   // read_receipt events that arrived before the window opened.
   reads: Record<number, number>;
+  // Initial per-message reaction summary for the conversation's
+  // loaded history. Keyed by message_id.
+  reactions: Record<number, ReactionGroup[]>;
 };
 
 export type MessagePayload = {
@@ -72,9 +76,30 @@ export type ReadReceiptPayload = {
   last_read_message_id: number;
 };
 
+// One incoming reaction toggle. Chat windows store reactions keyed
+// by message_id and apply the (user_id, emoji, action) delta.
+export type ReactionPayload = {
+  message_id: number;
+  user_id: number;
+  emoji: string;
+  action: "add" | "remove";
+};
+
+// One UserInfo update — fanned out to every open chat window when
+// any user's display_name or avatar changes so the conv member list,
+// message bubbles, etc. swap to the new view in one operation.
+export type UserUpdatedPayload = {
+  user: UserInfo;
+};
+
 export type SendPayload = {
   body: string;
   attachment_ids?: number[];
+};
+
+export type OutgoingReactPayload = {
+  message_id: number;
+  emoji: string;
 };
 
 // ---- event names ----------------------------------------------------
@@ -93,6 +118,8 @@ export const EVT = {
   IncomingTyping: "oreo:chat:typing",
   IncomingNudge: "oreo:chat:nudge",
   IncomingReadReceipt: "oreo:chat:read_receipt",
+  IncomingReaction: "oreo:chat:reaction",
+  UserUpdated: "oreo:chat:user_updated",
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
   MutedChanged: "oreo:chat:muted_changed",
@@ -101,6 +128,7 @@ export const EVT = {
   Send: "oreo:chat:send",
   OutgoingTyping: "oreo:chat:typing_out",
   OutgoingNudge: "oreo:chat:nudge_out",
+  OutgoingReact: "oreo:chat:react_out",
   Focused: "oreo:chat:focused",
   Leave: "oreo:chat:leave",
 } as const;
@@ -123,4 +151,10 @@ export function send(
 }
 
 // Re-exports so chat windows don't have to reach back through proto.
-export type { AttachmentView, ConversationView, MessageView, UserInfo };
+export type {
+  AttachmentView,
+  ConversationView,
+  MessageView,
+  ReactionGroup,
+  UserInfo,
+};

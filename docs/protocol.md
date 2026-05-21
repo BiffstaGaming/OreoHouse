@@ -154,6 +154,45 @@ Pushed to the *existing* members of a conversation whenever its membership chang
 
 A user who is themselves the change-target — the joiner / new invitee — gets `conversation_added` instead and does not receive a parallel `conversation_members_changed` for the same event.
 
+#### `user_profile_changed`
+
+Broadcast to every connected client whenever any user updates their
+`display_name` or uploads/clears their avatar (via `PUT /api/me/profile`
+or `POST /api/me/avatar`). Recipients should swap their cached
+`UserInfo` for this user — contact list rows, message bubbles, and
+chat-window headers all read from the same cache.
+
+```json
+{
+  "type": "user_profile_changed",
+  "user": {
+    "id": 2,
+    "username": "bob",
+    "created_at": "...",
+    "display_name": "Bob (Dad)",
+    "has_avatar": true
+  }
+}
+```
+
+#### `reaction`
+
+Broadcast to every member of a conversation when one of them toggles
+an emoji reaction on a message. `action` is `"add"` or `"remove"`.
+The sender's own UI updates from this same broadcast (one render
+path).
+
+```json
+{
+  "type": "reaction",
+  "message_id": 42,
+  "conversation_id": 7,
+  "user": { "id": 1, "username": "alice", "created_at": "..." },
+  "emoji": "👍",
+  "action": "add"
+}
+```
+
 #### `read_receipt`
 
 Broadcast to the *other* members of a conversation when a user's read
@@ -276,6 +315,22 @@ Send a window-shake nudge to the other members of a conversation. The server fan
 ```json
 { "type": "nudge", "conversation_id": 7 }
 ```
+
+#### `react`
+
+Toggle a reaction on a message. If `(message_id, sender, emoji)`
+already has a row, it's removed; otherwise it's added. On success
+the server broadcasts a server→client `reaction` (above) to every
+member of the message's conversation, including the sender, so all
+UIs render the same way.
+
+```json
+{ "type": "react", "message_id": 42, "emoji": "👍" }
+```
+
+The server validates that the message exists AND the sender is a
+member of its conversation. There's no rate limit; clients pace via
+the hover toolbar's UX.
 
 #### `read`
 

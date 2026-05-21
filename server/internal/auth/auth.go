@@ -47,10 +47,16 @@ var usernameRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{2,32}$`)
 
 // User is a row in the users table.
 type User struct {
-	ID        int64
-	Username  string
-	CreatedAt time.Time
-	IsAdmin   bool
+	ID                 int64
+	Username           string
+	CreatedAt          time.Time
+	IsAdmin            bool
+	// DisplayName is the optional pretty name shown in the UI.
+	// Empty string when not set; clients fall back to Username.
+	DisplayName        string
+	// AvatarAttachmentID is the id of the attachment the user uploaded
+	// as their avatar. Zero when no avatar is set.
+	AvatarAttachmentID int64
 }
 
 // UserDetail is User plus the columns the admin panel surfaces but
@@ -185,10 +191,15 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		u            User
 		passwordHash string
 		createdAt    string
+		displayName  sql.NullString
+		avatarID     sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, created_at, is_admin FROM users WHERE username = ?",
-		username).Scan(&u.ID, &u.Username, &passwordHash, &createdAt, &u.IsAdmin)
+	err := s.db.QueryRowContext(ctx, `
+        SELECT id, username, password_hash, created_at, is_admin,
+               display_name, avatar_attachment_id
+          FROM users
+         WHERE username = ?`,
+		username).Scan(&u.ID, &u.Username, &passwordHash, &createdAt, &u.IsAdmin, &displayName, &avatarID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Run bcrypt against a dummy hash so timing doesn't leak
 		// whether the user exists.
@@ -204,6 +215,12 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	u.CreatedAt, err = parseTime(createdAt)
 	if err != nil {
 		return User{}, fmt.Errorf("parsing created_at: %w", err)
+	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if avatarID.Valid {
+		u.AvatarAttachmentID = avatarID.Int64
 	}
 	return u, nil
 }
@@ -249,14 +266,20 @@ func (s *Service) LookupSession(ctx context.Context, token string) (User, Sessio
 		expiresAt     sql.NullString
 		userCreatedAt string
 	)
+	var (
+		displayName sql.NullString
+		avatarID    sql.NullInt64
+	)
 	err := s.db.QueryRowContext(ctx, `
         SELECT s.token, s.user_id, s.created_at, s.expires_at,
-               u.id,    u.username, u.created_at, u.is_admin
+               u.id,    u.username, u.created_at, u.is_admin,
+               u.display_name, u.avatar_attachment_id
           FROM sessions s
           JOIN users    u ON u.id = s.user_id
          WHERE s.token = ?
     `, token).Scan(&sess.Token, &sess.UserID, &createdAt, &expiresAt,
-		&u.ID, &u.Username, &userCreatedAt, &u.IsAdmin)
+		&u.ID, &u.Username, &userCreatedAt, &u.IsAdmin,
+		&displayName, &avatarID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, Session{}, ErrSessionNotFound
 	}
@@ -277,6 +300,12 @@ func (s *Service) LookupSession(ctx context.Context, token string) (User, Sessio
 	if err != nil {
 		return User{}, Session{}, fmt.Errorf("parsing user created_at: %w", err)
 	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if avatarID.Valid {
+		u.AvatarAttachmentID = avatarID.Int64
+	}
 	if sess.Expired(s.now()) {
 		return User{}, Session{}, ErrSessionExpired
 	}
@@ -293,6 +322,102 @@ func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, at time.Time
 		return fmt.Errorf("updating last_seen_at: %w", err)
 	}
 	return nil
+}
+
+// MaxDisplayNameLength bounds display-name updates. Enforced at the
+// REST layer; the column itself doesn't constrain.
+const MaxDisplayNameLength = 64
+
+// ErrDisplayNameTooLong is returned when SetDisplayName is given a
+// string exceeding MaxDisplayNameLength bytes.
+var ErrDisplayNameTooLong = fmt.Errorf(
+	"display name exceeds %d bytes", MaxDisplayNameLength,
+)
+
+// SetDisplayName updates a user's display name. Pass the empty string
+// to clear it (clients then fall back to username).
+func (s *Service) SetDisplayName(ctx context.Context, userID int64, name string) error {
+	if len(name) > MaxDisplayNameLength {
+		return ErrDisplayNameTooLong
+	}
+	var arg any
+	if name == "" {
+		arg = nil
+	} else {
+		arg = name
+	}
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE users SET display_name = ? WHERE id = ?", arg, userID)
+	if err != nil {
+		return fmt.Errorf("updating display_name: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// SetAvatarAttachmentID points the user's avatar at the given
+// attachment id. Pass 0 to clear (the row's avatar_attachment_id
+// becomes NULL).
+func (s *Service) SetAvatarAttachmentID(ctx context.Context, userID, attachmentID int64) error {
+	var arg any
+	if attachmentID <= 0 {
+		arg = nil
+	} else {
+		arg = attachmentID
+	}
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE users SET avatar_attachment_id = ? WHERE id = ?", arg, userID)
+	if err != nil {
+		return fmt.Errorf("updating avatar_attachment_id: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// GetUserByID returns the user with the given id. Returns
+// ErrUserNotFound when no row matches.
+func (s *Service) GetUserByID(ctx context.Context, userID int64) (User, error) {
+	var (
+		u           User
+		createdAt   string
+		displayName sql.NullString
+		avatarID    sql.NullInt64
+	)
+	err := s.db.QueryRowContext(ctx, `
+        SELECT id, username, created_at, is_admin,
+               display_name, avatar_attachment_id
+          FROM users
+         WHERE id = ?`,
+		userID).Scan(&u.ID, &u.Username, &createdAt, &u.IsAdmin, &displayName, &avatarID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("looking up user: %w", err)
+	}
+	u.CreatedAt, err = parseTime(createdAt)
+	if err != nil {
+		return User{}, fmt.Errorf("parsing created_at: %w", err)
+	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if avatarID.Valid {
+		u.AvatarAttachmentID = avatarID.Int64
+	}
+	return u, nil
 }
 
 // SetStatusText persists the user's custom status text. An empty
@@ -341,8 +466,11 @@ func (s *Service) DeleteSession(ctx context.Context, token string) error {
 
 // ListUsers returns all users in the database, ordered by id.
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, username, created_at, is_admin FROM users ORDER BY id")
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT id, username, created_at, is_admin,
+               display_name, avatar_attachment_id
+          FROM users
+      ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("querying users: %w", err)
 	}
@@ -350,10 +478,12 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var (
-			u         User
-			createdAt string
+			u           User
+			createdAt   string
+			displayName sql.NullString
+			avatarID    sql.NullInt64
 		)
-		if err := rows.Scan(&u.ID, &u.Username, &createdAt, &u.IsAdmin); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &createdAt, &u.IsAdmin, &displayName, &avatarID); err != nil {
 			return nil, fmt.Errorf("scanning user: %w", err)
 		}
 		t, err := parseTime(createdAt)
@@ -361,6 +491,12 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 			return nil, fmt.Errorf("parsing user created_at: %w", err)
 		}
 		u.CreatedAt = t
+		if displayName.Valid {
+			u.DisplayName = displayName.String
+		}
+		if avatarID.Valid {
+			u.AvatarAttachmentID = avatarID.Int64
+		}
 		out = append(out, u)
 	}
 	if err := rows.Err(); err != nil {
@@ -372,8 +508,11 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 // ListUsersDetail is ListUsers plus last_seen_at, for the admin panel.
 // LastSeenAt is the zero value when the user has never connected.
 func (s *Service) ListUsersDetail(ctx context.Context) ([]UserDetail, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, username, created_at, is_admin, last_seen_at FROM users ORDER BY id")
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT id, username, created_at, is_admin, last_seen_at,
+               display_name, avatar_attachment_id
+          FROM users
+      ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("querying users: %w", err)
 	}
@@ -381,11 +520,13 @@ func (s *Service) ListUsersDetail(ctx context.Context) ([]UserDetail, error) {
 	var out []UserDetail
 	for rows.Next() {
 		var (
-			d          UserDetail
-			createdAt  string
-			lastSeenAt sql.NullString
+			d           UserDetail
+			createdAt   string
+			lastSeenAt  sql.NullString
+			displayName sql.NullString
+			avatarID    sql.NullInt64
 		)
-		if err := rows.Scan(&d.ID, &d.Username, &createdAt, &d.IsAdmin, &lastSeenAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Username, &createdAt, &d.IsAdmin, &lastSeenAt, &displayName, &avatarID); err != nil {
 			return nil, fmt.Errorf("scanning user: %w", err)
 		}
 		t, err := parseTime(createdAt)
@@ -400,6 +541,12 @@ func (s *Service) ListUsersDetail(ctx context.Context) ([]UserDetail, error) {
 			}
 			d.LastSeenAt = ls
 		}
+		if displayName.Valid {
+			d.DisplayName = displayName.String
+		}
+		if avatarID.Valid {
+			d.AvatarAttachmentID = avatarID.Int64
+		}
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
@@ -413,12 +560,17 @@ func (s *Service) ListUsersDetail(ctx context.Context) ([]UserDetail, error) {
 // when no row matches. Used by the CLI promote/demote commands.
 func (s *Service) GetUserByUsername(ctx context.Context, username string) (User, error) {
 	var (
-		u         User
-		createdAt string
+		u           User
+		createdAt   string
+		displayName sql.NullString
+		avatarID    sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, username, created_at, is_admin FROM users WHERE username = ?",
-		username).Scan(&u.ID, &u.Username, &createdAt, &u.IsAdmin)
+	err := s.db.QueryRowContext(ctx, `
+        SELECT id, username, created_at, is_admin,
+               display_name, avatar_attachment_id
+          FROM users
+         WHERE username = ?`,
+		username).Scan(&u.ID, &u.Username, &createdAt, &u.IsAdmin, &displayName, &avatarID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
@@ -428,6 +580,12 @@ func (s *Service) GetUserByUsername(ctx context.Context, username string) (User,
 	u.CreatedAt, err = parseTime(createdAt)
 	if err != nil {
 		return User{}, fmt.Errorf("parsing user created_at: %w", err)
+	}
+	if displayName.Valid {
+		u.DisplayName = displayName.String
+	}
+	if avatarID.Valid {
+		u.AvatarAttachmentID = avatarID.Int64
 	}
 	return u, nil
 }

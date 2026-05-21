@@ -30,11 +30,18 @@ import {
   type ConvUpdatedPayload,
   type MessageView,
   type NudgePayload,
+  type ReactionGroup,
+  type ReactionPayload,
   type ReadReceiptPayload,
   type SessionSnapshot,
   type TypingPayload,
   type UserInfo,
+  type UserUpdatedPayload,
 } from "./lib/chatBridge";
+import { Avatar } from "./components/Avatar";
+import { EmojiPicker } from "./components/EmojiPicker";
+import { QUICK_REACTIONS } from "./lib/emoji";
+import { displayNameOf } from "./lib/users";
 
 import "./App.css";
 
@@ -58,6 +65,13 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   const [muted, setMuted] = useState(false);
   // user_id → highest message_id they've read in this conversation.
   const [reads, setReads] = useState<Map<number, number>>(new Map());
+  // message_id → reaction groups for that message.
+  const [reactions, setReactions] = useState<Map<number, ReactionGroup[]>>(
+    new Map(),
+  );
+  // user_id → latest UserInfo (display_name, has_avatar). Hydrated from
+  // conv.members + each message.sender, and updated by UserUpdated.
+  const [userCache, setUserCache] = useState<Map<number, UserInfo>>(new Map());
 
   // Use refs so the listen()-callbacks (set up once) can see the latest
   // session/muted without re-subscribing.
@@ -86,7 +100,6 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
         await listen<HydratePayload>(
           EVT.Hydrate,
           (e) => {
-            // Defensive: ignore a hydrate intended for some other conv.
             if (e.payload.conv.id !== convID) return;
             setSession(e.payload.session);
             setConv(e.payload.conv);
@@ -95,11 +108,24 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               new Map(e.payload.typers.map((t, i) => [-1 - i, t])),
             );
             setMuted(e.payload.muted);
-            const next = new Map<number, number>();
+            const reads = new Map<number, number>();
             for (const [uid, lr] of Object.entries(e.payload.reads ?? {})) {
-              next.set(Number(uid), lr);
+              reads.set(Number(uid), lr);
             }
-            setReads(next);
+            setReads(reads);
+            const rxs = new Map<number, ReactionGroup[]>();
+            for (const [mid, groups] of Object.entries(
+              e.payload.reactions ?? {},
+            )) {
+              rxs.set(Number(mid), groups);
+            }
+            setReactions(rxs);
+            // Seed userCache from conv members + each message's sender.
+            const uc = new Map<number, UserInfo>();
+            uc.set(e.payload.session.user.id, e.payload.session.user);
+            for (const m of e.payload.conv.members) uc.set(m.id, m);
+            for (const msg of e.payload.messages) uc.set(msg.sender.id, msg.sender);
+            setUserCache(uc);
           },
           opts,
         ),
@@ -111,6 +137,11 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
             setMessages((prev) => {
               if (prev.some((x) => x.id === m.id)) return prev;
               return [...prev, m].sort((a, b) => a.id - b.id);
+            });
+            setUserCache((prev) => {
+              const next = new Map(prev);
+              next.set(m.sender.id, m.sender);
+              return next;
             });
             const me = sessionRef.current;
             if (me && m.sender.id !== me.user.id && !mutedRef.current) {
@@ -176,6 +207,51 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               const next = new Map(prev);
               next.set(e.payload.user_id, e.payload.last_read_message_id);
               return next;
+            });
+          },
+          opts,
+        ),
+        await listen<ReactionPayload>(
+          EVT.IncomingReaction,
+          (e) => {
+            setReactions((prev) => {
+              const current = prev.get(e.payload.message_id) ?? [];
+              const next = applyReactionDelta(
+                current,
+                e.payload.user_id,
+                e.payload.emoji,
+                e.payload.action,
+              );
+              const out = new Map(prev);
+              if (next.length === 0) {
+                out.delete(e.payload.message_id);
+              } else {
+                out.set(e.payload.message_id, next);
+              }
+              return out;
+            });
+          },
+          opts,
+        ),
+        await listen<UserUpdatedPayload>(
+          EVT.UserUpdated,
+          (e) => {
+            setUserCache((prev) => {
+              const next = new Map(prev);
+              next.set(e.payload.user.id, e.payload.user);
+              return next;
+            });
+            // Also update the conv's stored member list, since chat
+            // windows derive titles/headers from it.
+            setConv((prev) => {
+              if (!prev) return prev;
+              const idx = prev.members.findIndex(
+                (m) => m.id === e.payload.user.id,
+              );
+              if (idx === -1) return prev;
+              const members = [...prev.members];
+              members[idx] = e.payload.user;
+              return { ...prev, members };
             });
           },
           opts,
@@ -261,8 +337,35 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
       typers={Array.from(typers.values())}
       shaking={shaking}
       reads={reads}
+      reactions={reactions}
+      userCache={userCache}
     />
   );
+}
+
+// applyReactionDelta — same logic as the App.tsx mergeReaction helper;
+// duplicated here so the chat-window bundle stays independent.
+function applyReactionDelta(
+  current: ReactionGroup[],
+  userID: number,
+  emoji: string,
+  action: "add" | "remove",
+): ReactionGroup[] {
+  const out = current.map((g) => ({ emoji: g.emoji, user_ids: [...g.user_ids] }));
+  const idx = out.findIndex((g) => g.emoji === emoji);
+  if (action === "add") {
+    if (idx === -1) {
+      out.push({ emoji, user_ids: [userID] });
+    } else if (!out[idx].user_ids.includes(userID)) {
+      out[idx].user_ids.push(userID);
+    }
+  } else {
+    if (idx === -1) return out;
+    out[idx].user_ids = out[idx].user_ids.filter((id) => id !== userID);
+    if (out[idx].user_ids.length === 0) out.splice(idx, 1);
+  }
+  out.sort((a, b) => (a.emoji < b.emoji ? -1 : a.emoji > b.emoji ? 1 : 0));
+  return out;
 }
 
 // ChatBody owns the composer state (draft text, pending attachments).
@@ -276,6 +379,8 @@ function ChatBody({
   typers,
   shaking,
   reads,
+  reactions,
+  userCache,
 }: {
   session: SessionSnapshot;
   conv: ConversationView;
@@ -284,13 +389,46 @@ function ChatBody({
   typers: { username: string; expiresAt: number }[];
   shaking: boolean;
   reads: Map<number, number>;
+  reactions: Map<number, ReactionGroup[]>;
+  userCache: Map<number, UserInfo>;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [nudgeCooldown, setNudgeCooldown] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const lastTypingSentAt = useRef(0);
+
+  const sendReact = useCallback(
+    (messageID: number, emoji: string) => {
+      void emit(EVT.OutgoingReact, {
+        conversation_id: convID,
+        message_id: messageID,
+        emoji,
+      });
+    },
+    [convID],
+  );
+
+  function insertEmojiInDraft(glyph: string) {
+    const el = inputRef.current;
+    if (!el) {
+      setDraft((d) => d + glyph);
+      return;
+    }
+    const start = el.selectionStart ?? draft.length;
+    const end = el.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + glyph + draft.slice(end);
+    setDraft(next);
+    // Restore cursor after the inserted glyph on next tick.
+    requestAnimationFrame(() => {
+      const pos = start + glyph.length;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  }
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -436,6 +574,9 @@ function ChatBody({
               session={session}
               conv={conv}
               reads={reads}
+              reactions={reactions.get(m.id) ?? []}
+              userCache={userCache}
+              onReact={(emoji) => sendReact(m.id, emoji)}
             />
           ))
         )}
@@ -486,7 +627,27 @@ function ChatBody({
         >
           📎
         </button>
+        <div className="composer-emoji-wrap">
+          <button
+            type="button"
+            className="composer-attach"
+            onClick={() => setEmojiOpen((v) => !v)}
+            title="Insert emoji"
+          >
+            😀
+          </button>
+          {emojiOpen && (
+            <EmojiPicker
+              onPick={(glyph) => {
+                insertEmojiInDraft(glyph);
+                setEmojiOpen(false);
+              }}
+              onClose={() => setEmojiOpen(false)}
+            />
+          )}
+        </div>
         <input
+          ref={inputRef}
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
@@ -522,28 +683,109 @@ function MessageRow({
   session,
   conv,
   reads,
+  reactions,
+  userCache,
+  onReact,
 }: {
   m: MessageView;
   session: SessionSnapshot;
   conv: ConversationView;
   reads: Map<number, number>;
+  reactions: ReactionGroup[];
+  userCache: Map<number, UserInfo>;
+  onReact: (emoji: string) => void;
 }) {
   const mine = m.sender.id === session.user.id;
+  const sender = userCache.get(m.sender.id) ?? m.sender;
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div className={`msg ${mine ? "msg-mine" : ""}`}>
-      <div className="msg-meta">
-        <span className="msg-sender">{mine ? "you" : m.sender.username}</span>
-        <span className="msg-time">{formatTime(m.created_at)}</span>
-      </div>
-      {m.body && <div className="msg-body">{m.body}</div>}
-      {m.attachments && m.attachments.length > 0 && (
-        <div className="msg-attachments">
-          {m.attachments.map((a) => (
-            <AttachmentRender key={a.id} a={a} session={session} />
-          ))}
+      <div className="msg-row">
+        {!mine && (
+          <Avatar
+            user={sender}
+            serverUrl={session.serverUrl}
+            token={session.token}
+            size={28}
+            className="msg-avatar"
+          />
+        )}
+        <div className="msg-bubble">
+          <div className="msg-meta">
+            <span className="msg-sender">
+              {mine ? "you" : displayNameOf(sender)}
+            </span>
+            <span className="msg-time">{formatTime(m.created_at)}</span>
+          </div>
+          {m.body && <div className="msg-body">{m.body}</div>}
+          {m.attachments && m.attachments.length > 0 && (
+            <div className="msg-attachments">
+              {m.attachments.map((a) => (
+                <AttachmentRender key={a.id} a={a} session={session} />
+              ))}
+            </div>
+          )}
+          {reactions.length > 0 && (
+            <div className="msg-reactions">
+              {reactions.map((g) => {
+                const mine = g.user_ids.includes(session.user.id);
+                const names = g.user_ids
+                  .map((uid) => userCache.get(uid))
+                  .filter((u): u is UserInfo => u !== undefined)
+                  .map(displayNameOf)
+                  .join(", ");
+                return (
+                  <button
+                    key={g.emoji}
+                    type="button"
+                    className={`msg-reaction ${mine ? "mine" : ""}`}
+                    title={names || `${g.user_ids.length} reactions`}
+                    onClick={() => onReact(g.emoji)}
+                  >
+                    <span>{g.emoji}</span>
+                    <span>{g.user_ids.length}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {mine && (
+            <ReadTicks m={m} conv={conv} reads={reads} self={session.user} />
+          )}
         </div>
-      )}
-      {mine && <ReadTicks m={m} conv={conv} reads={reads} self={session.user} />}
+        <div className="msg-toolbar">
+          {QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              className="msg-toolbar-btn"
+              title={`React with ${emoji}`}
+              onClick={() => onReact(emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="msg-toolbar-btn"
+            title="More reactions"
+            onClick={() => setPickerOpen((v) => !v)}
+          >
+            ⊕
+          </button>
+          {pickerOpen && (
+            <div className="msg-toolbar-picker">
+              <EmojiPicker
+                onPick={(glyph) => {
+                  onReact(glyph);
+                  setPickerOpen(false);
+                }}
+                onClose={() => setPickerOpen(false)}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
