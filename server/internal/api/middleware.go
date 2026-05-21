@@ -48,3 +48,23 @@ func requireAuth(svc *auth.Service) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// requireAdmin is requireAuth plus an is_admin gate. The user is
+// resolved exactly the same way; non-admin callers see HTTP 403 with
+// an "admin required" error. Always stack this *after* the Authorization
+// Bearer check — calling it standalone won't work, the user must
+// already be in context.
+func requireAdmin(svc *auth.Service) func(http.Handler) http.Handler {
+	authMW := requireAuth(svc)
+	return func(next http.Handler) http.Handler {
+		gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, ok := UserFromContext(r.Context())
+			if !ok || !u.IsAdmin {
+				writeJSONError(w, http.StatusForbidden, "admin required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		return authMW(gated)
+	}
+}

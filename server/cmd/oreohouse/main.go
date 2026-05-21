@@ -101,6 +101,7 @@ func runServe(args []string) error {
 	}
 
 	authHandler := api.NewAuthHandler(authSvc)
+	adminHandler := api.NewAdminHandler(authSvc)
 
 	hub := ws.NewHub()
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
@@ -130,6 +131,7 @@ func runServe(args []string) error {
 	r.Get("/health", handleHealth)
 	r.Get("/ws", wsHandler.ServeHTTP)
 	authHandler.Mount(r)
+	adminHandler.Mount(r)
 	convsHandler.Mount(r)
 	filesHandler.Mount(r)
 
