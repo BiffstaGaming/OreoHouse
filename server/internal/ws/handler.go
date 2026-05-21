@@ -251,6 +251,10 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleRead(ctx, c, data)
 		case proto.TypeReact:
 			h.handleReact(ctx, c, data)
+		case proto.TypeEdit:
+			h.handleEdit(ctx, c, data)
+		case proto.TypeDelete:
+			h.handleDelete(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
@@ -454,6 +458,107 @@ func (h *Handler) handleReact(ctx context.Context, c *Client, raw []byte) {
 	h.hub.SendToUsers(b, memberIDs)
 }
 
+// handleEdit replaces a message body in-place and broadcasts a
+// message_edited event. Only the original sender can edit, only
+// within messages.EditWindow, and the message must still be live.
+func (h *Handler) handleEdit(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingEditMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid edit body")
+		return
+	}
+	if in.MessageID <= 0 {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "message_id is required")
+		return
+	}
+	updated, err := h.messages.EditMessage(ctx, in.MessageID, c.user.ID, in.Body)
+	switch {
+	case errors.Is(err, messages.ErrNotFound):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "message not found")
+		return
+	case errors.Is(err, messages.ErrNotSender):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "not your message")
+		return
+	case errors.Is(err, messages.ErrEditWindowExpired):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "edit window has expired")
+		return
+	case errors.Is(err, messages.ErrAlreadyDeleted):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "message is deleted")
+		return
+	case errors.Is(err, messages.ErrBodyTooLong):
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, err.Error())
+		return
+	case err != nil:
+		slog.Error("ws: edit message failed", "error", err)
+		return
+	}
+	members, err := h.convs.Members(ctx, updated.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.MessageEditedMessage{
+		Type:           proto.TypeMessageEdited,
+		MessageID:      updated.ID,
+		ConversationID: updated.ConversationID,
+		Body:           updated.Body,
+		EditedAt:       updated.EditedAt.UTC().Format(time.RFC3339Nano),
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	ids := make([]int64, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m.UserID)
+	}
+	h.hub.SendToUsers(b, ids)
+}
+
+// handleDelete soft-deletes a message and broadcasts a
+// message_deleted event. Only the original sender can delete.
+func (h *Handler) handleDelete(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingDeleteMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid delete body")
+		return
+	}
+	if in.MessageID <= 0 {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "message_id is required")
+		return
+	}
+	updated, err := h.messages.DeleteMessage(ctx, in.MessageID, c.user.ID)
+	switch {
+	case errors.Is(err, messages.ErrNotFound):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "message not found")
+		return
+	case errors.Is(err, messages.ErrNotSender):
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "not your message")
+		return
+	case err != nil:
+		slog.Error("ws: delete message failed", "error", err)
+		return
+	}
+	members, err := h.convs.Members(ctx, updated.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.MessageDeletedMessage{
+		Type:           proto.TypeMessageDeleted,
+		MessageID:      updated.ID,
+		ConversationID: updated.ConversationID,
+		DeletedAt:      updated.DeletedAt.UTC().Format(time.RFC3339Nano),
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	ids := make([]int64, 0, len(members))
+	for _, m := range members {
+		ids = append(ids, m.UserID)
+	}
+	h.hub.SendToUsers(b, ids)
+}
+
 // handleStatus updates the sender's discrete state and custom text.
 // On a real change, the new presence is broadcast to all connected
 // clients (so contact lists update live). Custom text is persisted
@@ -521,6 +626,16 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		return
 	}
 
+	// Validate the reply target (if any) — must be a message in the
+	// same conversation. Silent drop on mismatch so the send still
+	// goes through as a plain message.
+	if in.ReplyToID > 0 {
+		parent, perr := h.messages.Get(ctx, in.ReplyToID)
+		if perr != nil || parent.ConversationID != in.ConversationID {
+			in.ReplyToID = 0
+		}
+	}
+
 	// Pre-validate attachments so we don't persist a message we can't
 	// fully back up. Each must exist, be owned by the sender, and not
 	// already be linked to a message.
@@ -547,7 +662,9 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		preValidated = append(preValidated, a)
 	}
 
-	persisted, err := h.messages.Send(ctx, in.ConversationID, c.user.ID, in.Body)
+	persisted, err := h.messages.SendReply(
+		ctx, in.ConversationID, c.user.ID, in.Body, in.ReplyToID,
+	)
 	if err != nil {
 		slog.Error("ws: message persist failed", "error", err)
 		h.sendErrorAsync(c, proto.ErrCodeForbidden, "internal error")
@@ -577,6 +694,7 @@ func (h *Handler) handleIncomingMessage(ctx context.Context, c *Client, raw []by
 		Body:           persisted.Body,
 		CreatedAt:      persisted.CreatedAt.UTC().Format(time.RFC3339Nano),
 		Attachments:    attachmentsToViews(preValidated),
+		ReplyTo:        h.buildReplySnippet(ctx, persisted.ReplyToID, members),
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -650,6 +768,13 @@ func (h *Handler) replayMissed(ctx context.Context, conn *websocket.Conn, user a
 				Body:           m.Body,
 				CreatedAt:      m.CreatedAt.UTC().Format(time.RFC3339Nano),
 				Attachments:    attachmentsToViews(attsByMessage[m.ID]),
+				ReplyTo:        h.buildReplySnippet(ctx, m.ReplyToID, members),
+			}
+			if !m.EditedAt.IsZero() {
+				out.EditedAt = m.EditedAt.UTC().Format(time.RFC3339Nano)
+			}
+			if !m.DeletedAt.IsZero() {
+				out.DeletedAt = m.DeletedAt.UTC().Format(time.RFC3339Nano)
 			}
 			b, err := json.Marshal(out)
 			if err != nil {
@@ -673,14 +798,51 @@ func (h *Handler) replayMissed(ctx context.Context, conn *websocket.Conn, user a
 
 // senderUserInfo returns the proto.UserInfo for senderID by looking it
 // up in members; falls back to a sparse placeholder if the sender is
-// no longer in the conversation (left, deleted).
+// no longer in the conversation (left, deleted). Uses the rich
+// Member columns so display_name + avatar flow through replays.
 func senderUserInfo(senderID int64, members []conversations.Member) proto.UserInfo {
 	for _, m := range members {
 		if m.UserID == senderID {
-			return proto.UserInfo{ID: m.UserID, Username: m.Username}
+			return proto.UserInfo{
+				ID:            m.UserID,
+				Username:      m.Username,
+				DisplayName:   m.DisplayName,
+				HasAvatar:     m.AvatarAttachmentID > 0,
+				AvatarVersion: m.AvatarAttachmentID,
+			}
 		}
 	}
 	return proto.UserInfo{ID: senderID}
+}
+
+// buildReplySnippet hydrates the {id, sender, body, deleted?} preview
+// the client renders above a reply. Truncates body to keep wire size
+// in check. Returns nil when replyToID is 0 or the parent is gone.
+func (h *Handler) buildReplySnippet(
+	ctx context.Context, replyToID int64, members []conversations.Member,
+) *proto.ReplySnippet {
+	if replyToID <= 0 {
+		return nil
+	}
+	parent, err := h.messages.Get(ctx, replyToID)
+	if err != nil {
+		return nil
+	}
+	const previewBytes = 160
+	body := parent.Body
+	deleted := !parent.DeletedAt.IsZero()
+	if deleted {
+		body = ""
+	}
+	if len(body) > previewBytes {
+		body = body[:previewBytes]
+	}
+	return &proto.ReplySnippet{
+		ID:      parent.ID,
+		Sender:  senderUserInfo(parent.SenderID, members),
+		Body:    body,
+		Deleted: deleted,
+	}
 }
 
 // attachmentsToViews maps service-level Attachment rows to the proto

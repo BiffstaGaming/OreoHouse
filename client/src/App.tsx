@@ -36,8 +36,12 @@ import {
   type ConvUpdatedPayload,
   type HydratePayload,
   type MembersChangedPayload,
+  type MessageDeletedPayload,
+  type MessageEditedPayload,
   type MessagePayload,
   type NudgePayload,
+  type OutgoingDeletePayload,
+  type OutgoingEditPayload,
   type OutgoingReactPayload,
   type ReactionPayload,
   type ReadReceiptPayload,
@@ -518,8 +522,30 @@ function ChatScreen({
             conversation_id: e.payload.conversation_id,
             body: e.payload.body,
             attachment_ids: e.payload.attachment_ids,
+            reply_to_id: e.payload.reply_to_id,
           });
         }),
+        await listen<ChatToMainEnvelope<OutgoingEditPayload>>(
+          EVT.OutgoingEdit,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "edit",
+              message_id: e.payload.message_id,
+              body: e.payload.body,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<OutgoingDeletePayload>>(
+          EVT.OutgoingDelete,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "delete",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
         await listen<ChatToMainEnvelope<{}>>(EVT.OutgoingTyping, (e) => {
           if (!wsRef.current) return;
           wsRef.current.send({
@@ -735,6 +761,53 @@ function ChatScreen({
           }
         }
         return;
+      case "message_edited": {
+        const cid = msg.conversation_id;
+        setMessages((prev) => {
+          const list = prev.get(cid);
+          if (!list) return prev;
+          const next = list.map((m) =>
+            m.id === msg.message_id
+              ? { ...m, body: msg.body, edited_at: msg.edited_at }
+              : m,
+          );
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          const payload: MessageEditedPayload = {
+            message_id: msg.message_id,
+            body: msg.body,
+            edited_at: msg.edited_at,
+          };
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageEdited, payload);
+        }
+        return;
+      }
+      case "message_deleted": {
+        const cid = msg.conversation_id;
+        setMessages((prev) => {
+          const list = prev.get(cid);
+          if (!list) return prev;
+          const next = list.map((m) =>
+            m.id === msg.message_id
+              ? { ...m, body: "", deleted_at: msg.deleted_at }
+              : m,
+          );
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          const payload: MessageDeletedPayload = {
+            message_id: msg.message_id,
+            deleted_at: msg.deleted_at,
+          };
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageDeleted, payload);
+        }
+        return;
+      }
       case "read_receipt":
         setReads((prev) => {
           const inner = new Map(prev.get(msg.conversation_id) ?? new Map());

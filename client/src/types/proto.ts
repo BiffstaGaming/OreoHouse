@@ -53,6 +53,10 @@ export const MessageType = {
   UserProfileChanged: "user_profile_changed",
   React: "react",
   Reaction: "reaction",
+  Edit: "edit",
+  MessageEdited: "message_edited",
+  Delete: "delete",
+  MessageDeleted: "message_deleted",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -165,18 +169,66 @@ export interface OutgoingMessage {
   sender: UserInfo;
   body: string;
   created_at: string;
+  edited_at?: string;
+  deleted_at?: string;
   attachments?: AttachmentView[];
   reactions?: ReactionGroup[];
+  reply_to?: ReplySnippet;
 }
 
 // Client→server: post a message to a conversation. Body is 0..4096
 // bytes plain text; either body or attachment_ids (or both) must be
-// non-empty.
+// non-empty. reply_to_id, when set, references a message in the same
+// conversation that the new message quotes.
 export interface IncomingMessage {
   type: "message";
   conversation_id: number;
   body: string;
   attachment_ids?: number[];
+  reply_to_id?: number;
+}
+
+// Client→server: replace the body of one of YOUR own messages (within
+// 15 minutes of sending). Server validates ownership + window.
+export interface IncomingEditMessage {
+  type: "edit";
+  message_id: number;
+  body: string;
+}
+
+// Server→all-members for a successful edit. Updates body + adds
+// edited_at marker.
+export interface MessageEditedMessage {
+  type: "message_edited";
+  message_id: number;
+  conversation_id: number;
+  body: string;
+  edited_at: string;
+}
+
+// Client→server: soft-delete one of YOUR own messages. No time limit
+// other than the membership check.
+export interface IncomingDeleteMessage {
+  type: "delete";
+  message_id: number;
+}
+
+// Server→all-members: a message was deleted. Clients render the
+// "this message was deleted" placeholder.
+export interface MessageDeletedMessage {
+  type: "message_deleted";
+  message_id: number;
+  conversation_id: number;
+  deleted_at: string;
+}
+
+// Embedded quote preview on a reply message. Body is server-truncated
+// to ~160 bytes; deleted=true means the original was soft-deleted.
+export interface ReplySnippet {
+  id: number;
+  sender: UserInfo;
+  body: string;
+  deleted?: boolean;
 }
 
 // Pushed to a user when they're added to a new conversation.
@@ -260,7 +312,9 @@ export type ServerMessage =
   | NudgeMessage
   | ReadReceiptMessage
   | UserProfileChangedMessage
-  | ReactionMessage;
+  | ReactionMessage
+  | MessageEditedMessage
+  | MessageDeletedMessage;
 
 export type ClientMessage =
   | PingMessage
@@ -269,7 +323,9 @@ export type ClientMessage =
   | IncomingTypingMessage
   | IncomingNudgeMessage
   | IncomingReadMessage
-  | IncomingReactMessage;
+  | IncomingReactMessage
+  | IncomingEditMessage
+  | IncomingDeleteMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 
@@ -322,8 +378,11 @@ export interface MessageView {
   sender: UserInfo;
   body: string;
   created_at: string;
+  edited_at?: string;
+  deleted_at?: string;
   attachments?: AttachmentView[];
   reactions?: ReactionGroup[];
+  reply_to?: ReplySnippet;
 }
 
 export interface ListMessagesResponse {

@@ -920,6 +920,77 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+/* --- Edited / deleted markers + reply quote --- */
+.msg-edited {
+  margin-left: 0.3rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  opacity: 0.65;
+}
+.msg-deleted {
+  font-style: italic;
+  opacity: 0.55;
+}
+.msg-quote {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem;
+  margin-bottom: 0.3rem;
+  background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid var(--msn-blue-light);
+  border-radius: 0.25rem;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  overflow: hidden;
+}
+.msg-quote-arrow {
+  opacity: 0.65;
+}
+.msg-quote-sender {
+  font-weight: 600;
+}
+.msg-quote-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Edit / delete toolbar buttons share msg-toolbar-btn styles; the
+ * danger modifier turns the trash red on hover. */
+.msg-toolbar-btn.danger:hover {
+  background: rgba(181, 61, 61, 0.18);
+}
+
+/* Composer "Replying to" / "Editing" pill above the input. */
+.composer-context {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+  border-top: 1px solid var(--msn-border-soft);
+  background: rgba(74, 141, 232, 0.08);
+}
+.composer-context.editing {
+  background: rgba(255, 213, 79, 0.16);
+}
+.composer-context button {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: inherit;
+  padding: 0 0.25rem;
+}
+.composer-context-quote {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- Reaction pills under message bubbles --- */
 .msg-reactions {
   display: flex;

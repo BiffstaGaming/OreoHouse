@@ -15,6 +15,7 @@ import type {
   ConversationView,
   MessageView,
   ReactionGroup,
+  ReplySnippet,
   UserInfo,
 } from "../types/proto";
 
@@ -95,11 +96,32 @@ export type UserUpdatedPayload = {
 export type SendPayload = {
   body: string;
   attachment_ids?: number[];
+  reply_to_id?: number;
 };
 
 export type OutgoingReactPayload = {
   message_id: number;
   emoji: string;
+};
+
+export type OutgoingEditPayload = {
+  message_id: number;
+  body: string;
+};
+
+export type OutgoingDeletePayload = {
+  message_id: number;
+};
+
+export type MessageEditedPayload = {
+  message_id: number;
+  body: string;
+  edited_at: string;
+};
+
+export type MessageDeletedPayload = {
+  message_id: number;
+  deleted_at: string;
 };
 
 // ---- event names ----------------------------------------------------
@@ -119,6 +141,8 @@ export const EVT = {
   IncomingNudge: "oreo:chat:nudge",
   IncomingReadReceipt: "oreo:chat:read_receipt",
   IncomingReaction: "oreo:chat:reaction",
+  IncomingMessageEdited: "oreo:chat:message_edited",
+  IncomingMessageDeleted: "oreo:chat:message_deleted",
   UserUpdated: "oreo:chat:user_updated",
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
@@ -129,6 +153,8 @@ export const EVT = {
   OutgoingTyping: "oreo:chat:typing_out",
   OutgoingNudge: "oreo:chat:nudge_out",
   OutgoingReact: "oreo:chat:react_out",
+  OutgoingEdit: "oreo:chat:edit_out",
+  OutgoingDelete: "oreo:chat:delete_out",
   Focused: "oreo:chat:focused",
   Leave: "oreo:chat:leave",
 } as const;
@@ -156,5 +182,6 @@ export type {
   ConversationView,
   MessageView,
   ReactionGroup,
+  ReplySnippet,
   UserInfo,
 };

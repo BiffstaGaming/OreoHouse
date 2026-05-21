@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -208,9 +209,43 @@ func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Reque
 		view := messageToView(m, members)
 		view.Attachments = attachmentsToViews(attsByMsg[m.ID])
 		view.Reactions = reactionsByMsg[m.ID]
+		if m.ReplyToID > 0 {
+			view.ReplyTo = h.buildReplySnippet(r.Context(), m.ReplyToID, members)
+		}
 		out[i] = view
 	}
 	writeJSON(w, http.StatusOK, proto.ListMessagesResponse{Messages: out})
+}
+
+// buildReplySnippet — REST-side variant of the WS handler's helper.
+// Returns nil on lookup failure so the client falls back to "(replied
+// to a deleted message)" gracefully when reply_to_id dangles after a
+// delete cascade.
+func (h *ConversationsHandler) buildReplySnippet(
+	ctx context.Context, replyToID int64, members []conversations.Member,
+) *proto.ReplySnippet {
+	if replyToID <= 0 {
+		return nil
+	}
+	parent, err := h.messages.Get(ctx, replyToID)
+	if err != nil {
+		return nil
+	}
+	const previewBytes = 160
+	body := parent.Body
+	deleted := !parent.DeletedAt.IsZero()
+	if deleted {
+		body = ""
+	}
+	if len(body) > previewBytes {
+		body = body[:previewBytes]
+	}
+	return &proto.ReplySnippet{
+		ID:      parent.ID,
+		Sender:  senderInfo(parent.SenderID, members),
+		Body:    body,
+		Deleted: deleted,
+	}
 }
 
 // groupReactions folds a flat list of (message, user, emoji) rows
@@ -639,13 +674,20 @@ func parseIDParam(w http.ResponseWriter, r *http.Request, key string) (int64, bo
 }
 
 func messageToView(m messages.Message, members []conversations.Member) proto.MessageView {
-	return proto.MessageView{
+	v := proto.MessageView{
 		ID:             m.ID,
 		ConversationID: m.ConversationID,
 		Sender:         senderInfo(m.SenderID, members),
 		Body:           m.Body,
 		CreatedAt:      m.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if !m.EditedAt.IsZero() {
+		v.EditedAt = m.EditedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !m.DeletedAt.IsZero() {
+		v.DeletedAt = m.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return v
 }
 
 func senderInfo(senderID int64, members []conversations.Member) proto.UserInfo {

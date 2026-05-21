@@ -19,6 +19,10 @@ const (
 	TypeUserProfileChanged         = "user_profile_changed"
 	TypeReact                      = "react"
 	TypeReaction                   = "reaction"
+	TypeEdit                       = "edit"
+	TypeMessageEdited              = "message_edited"
+	TypeDelete                     = "delete"
+	TypeMessageDeleted             = "message_deleted"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -168,12 +172,49 @@ type PongMessage struct {
 
 // IncomingMessage is the client→server "message" envelope: send a
 // chat message to a conversation the sender is a member of. At least
-// one of Body or AttachmentIDs must be present.
+// one of Body or AttachmentIDs must be present. ReplyToID, when
+// non-zero, references another message id in the same conversation
+// the client is quoting.
 type IncomingMessage struct {
 	Type           string  `json:"type"`
 	ConversationID int64   `json:"conversation_id"`
 	Body           string  `json:"body"`
 	AttachmentIDs  []int64 `json:"attachment_ids,omitempty"`
+	ReplyToID      int64   `json:"reply_to_id,omitempty"`
+}
+
+// IncomingEditMessage is the client→server "edit" envelope. Server
+// validates sender + 15-minute window + body length, then broadcasts
+// MessageEditedMessage to every conversation member.
+type IncomingEditMessage struct {
+	Type      string `json:"type"`
+	MessageID int64  `json:"message_id"`
+	Body      string `json:"body"`
+}
+
+// MessageEditedMessage is server→all-members for a successful edit.
+type MessageEditedMessage struct {
+	Type           string `json:"type"`
+	MessageID      int64  `json:"message_id"`
+	ConversationID int64  `json:"conversation_id"`
+	Body           string `json:"body"`
+	EditedAt       string `json:"edited_at"`
+}
+
+// IncomingDeleteMessage is the client→server "delete" envelope.
+// Server validates sender, then soft-deletes and broadcasts
+// MessageDeletedMessage.
+type IncomingDeleteMessage struct {
+	Type      string `json:"type"`
+	MessageID int64  `json:"message_id"`
+}
+
+// MessageDeletedMessage is server→all-members for a soft-delete.
+type MessageDeletedMessage struct {
+	Type           string `json:"type"`
+	MessageID      int64  `json:"message_id"`
+	ConversationID int64  `json:"conversation_id"`
+	DeletedAt      string `json:"deleted_at"`
 }
 
 // OutgoingMessage is the server→every-member "message" envelope.
@@ -185,8 +226,11 @@ type OutgoingMessage struct {
 	Sender         UserInfo         `json:"sender"`
 	Body           string           `json:"body"`
 	CreatedAt      string           `json:"created_at"`
+	EditedAt       string           `json:"edited_at,omitempty"`
+	DeletedAt      string           `json:"deleted_at,omitempty"`
 	Attachments    []AttachmentView `json:"attachments,omitempty"`
 	Reactions      []ReactionGroup  `json:"reactions,omitempty"`
+	ReplyTo        *ReplySnippet    `json:"reply_to,omitempty"`
 }
 
 // ConversationAddedMessage is pushed to a user when they're added to

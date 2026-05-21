@@ -26,6 +26,8 @@ import {
   type ConversationView,
   type HydratePayload,
   type MessagePayload,
+  type MessageDeletedPayload,
+  type MessageEditedPayload,
   type MembersChangedPayload,
   type ConvUpdatedPayload,
   type MessageView,
@@ -33,6 +35,7 @@ import {
   type ReactionGroup,
   type ReactionPayload,
   type ReadReceiptPayload,
+  type ReplySnippet,
   type SessionSnapshot,
   type TypingPayload,
   type UserInfo,
@@ -233,6 +236,32 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           },
           opts,
         ),
+        await listen<MessageEditedPayload>(
+          EVT.IncomingMessageEdited,
+          (e) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === e.payload.message_id
+                  ? { ...m, body: e.payload.body, edited_at: e.payload.edited_at }
+                  : m,
+              ),
+            );
+          },
+          opts,
+        ),
+        await listen<MessageDeletedPayload>(
+          EVT.IncomingMessageDeleted,
+          (e) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === e.payload.message_id
+                  ? { ...m, body: "", deleted_at: e.payload.deleted_at }
+                  : m,
+              ),
+            );
+          },
+          opts,
+        ),
         await listen<UserUpdatedPayload>(
           EVT.UserUpdated,
           (e) => {
@@ -396,6 +425,13 @@ function ChatBody({
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [nudgeCooldown, setNudgeCooldown] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // Editing state: when non-null, the composer replaces "send" with
+  // "save edit" and operates on this message id instead of creating
+  // a new one.
+  const [editing, setEditing] = useState<MessageView | null>(null);
+  // Reply target: when non-null, the composer shows a quote pill and
+  // outgoing messages are sent with reply_to_id set.
+  const [replyTarget, setReplyTarget] = useState<MessageView | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -411,6 +447,49 @@ function ChatBody({
     },
     [convID],
   );
+
+  const sendEditOut = useCallback(
+    (messageID: number, body: string) => {
+      void emit(EVT.OutgoingEdit, {
+        conversation_id: convID,
+        message_id: messageID,
+        body,
+      });
+    },
+    [convID],
+  );
+
+  const sendDeleteOut = useCallback(
+    (messageID: number) => {
+      void emit(EVT.OutgoingDelete, {
+        conversation_id: convID,
+        message_id: messageID,
+      });
+    },
+    [convID],
+  );
+
+  function startEdit(m: MessageView) {
+    setEditing(m);
+    setReplyTarget(null);
+    setDraft(m.body);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setDraft("");
+  }
+
+  function startReply(m: MessageView) {
+    setReplyTarget(m);
+    setEditing(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function cancelReply() {
+    setReplyTarget(null);
+  }
 
   function insertEmojiInDraft(glyph: string) {
     const el = inputRef.current;
@@ -436,11 +515,12 @@ function ChatBody({
   }, [messages]);
 
   const sendOut = useCallback(
-    (body: string, attachmentIDs?: number[]) => {
+    (body: string, attachmentIDs?: number[], replyToID?: number) => {
       void emit(EVT.Send, {
         conversation_id: convID,
         body,
         attachment_ids: attachmentIDs,
+        reply_to_id: replyToID,
       });
     },
     [convID],
@@ -512,17 +592,39 @@ function ChatBody({
 
   function trySend() {
     const body = draft.trim();
-    if (!body && readyIDs.length === 0) return;
     if (uploading) return;
-    sendOut(body, readyIDs.length > 0 ? readyIDs : undefined);
+    // Editing path: send an edit instead of a new message.
+    if (editing) {
+      if (!body) return;
+      sendEditOut(editing.id, body);
+      cancelEdit();
+      return;
+    }
+    if (!body && readyIDs.length === 0) return;
+    sendOut(
+      body,
+      readyIDs.length > 0 ? readyIDs : undefined,
+      replyTarget?.id,
+    );
     setDraft("");
     setPending((p) => p.filter((x) => x.kind === "uploading"));
+    setReplyTarget(null);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       trySend();
+      return;
+    }
+    if (e.key === "Escape") {
+      if (editing) {
+        e.preventDefault();
+        cancelEdit();
+      } else if (replyTarget) {
+        e.preventDefault();
+        cancelReply();
+      }
     }
   }
 
@@ -577,6 +679,11 @@ function ChatBody({
               reactions={reactions.get(m.id) ?? []}
               userCache={userCache}
               onReact={(emoji) => sendReact(m.id, emoji)}
+              onReply={() => startReply(m)}
+              onEdit={() => startEdit(m)}
+              onDelete={() => {
+                if (confirm("Delete this message?")) sendDeleteOut(m.id);
+              }}
             />
           ))
         )}
@@ -588,6 +695,28 @@ function ChatBody({
         </div>
       )}
 
+      {editing && (
+        <div className="composer-context editing">
+          <span>
+            Editing message — press <kbd>Esc</kbd> to cancel
+          </span>
+          <button type="button" onClick={cancelEdit}>
+            ×
+          </button>
+        </div>
+      )}
+      {!editing && replyTarget && (
+        <div className="composer-context replying">
+          <span className="composer-context-quote">
+            Replying to{" "}
+            <strong>{displayNameOf(userCache.get(replyTarget.sender.id) ?? replyTarget.sender)}</strong>
+            : {truncate(replyTarget.body || "(attachment)", 80)}
+          </span>
+          <button type="button" onClick={cancelReply}>
+            ×
+          </button>
+        </div>
+      )}
       {pending.length > 0 && (
         <div className="composer-pending">
           {pending.map((p) => (
@@ -668,7 +797,7 @@ function ChatBody({
           type="submit"
           disabled={uploading || (!draft.trim() && readyIDs.length === 0)}
         >
-          {uploading ? "…" : "Send"}
+          {uploading ? "…" : editing ? "Save" : "Send"}
         </button>
       </form>
     </main>
@@ -686,6 +815,9 @@ function MessageRow({
   reactions,
   userCache,
   onReact,
+  onReply,
+  onEdit,
+  onDelete,
 }: {
   m: MessageView;
   session: SessionSnapshot;
@@ -694,9 +826,20 @@ function MessageRow({
   reactions: ReactionGroup[];
   userCache: Map<number, UserInfo>;
   onReact: (emoji: string) => void;
+  onReply: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   const mine = m.sender.id === session.user.id;
   const sender = userCache.get(m.sender.id) ?? m.sender;
+  const isDeleted = !!m.deleted_at;
+  const isEdited = !!m.edited_at;
+  // Edit window is 15 min — match the server. We don't block clicks
+  // past the window (server enforces), but greying out is gentler.
+  const editable =
+    mine &&
+    !isDeleted &&
+    Date.now() - new Date(m.created_at).getTime() < 15 * 60 * 1000;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerFlipUp, setPickerFlipUp] = useState(false);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
@@ -725,13 +868,23 @@ function MessageRow({
           />
         )}
         <div className="msg-bubble">
+          {m.reply_to && (
+            <ReplyQuote snippet={m.reply_to} userCache={userCache} />
+          )}
           <div className="msg-meta">
             <span className="msg-sender">
               {mine ? "you" : displayNameOf(sender)}
             </span>
             <span className="msg-time">{formatTime(m.created_at)}</span>
           </div>
-          {m.body && <div className="msg-body">{m.body}</div>}
+          {isDeleted ? (
+            <div className="msg-body msg-deleted">this message was deleted</div>
+          ) : m.body ? (
+            <div className="msg-body">
+              {m.body}
+              {isEdited && <span className="msg-edited"> (edited)</span>}
+            </div>
+          ) : null}
           {m.attachments && m.attachments.length > 0 && (
             <div className="msg-attachments">
               {m.attachments.map((a) => (
@@ -768,25 +921,60 @@ function MessageRow({
           )}
         </div>
         <div className="msg-toolbar" ref={toolbarRef}>
-          {QUICK_REACTIONS.map((emoji) => (
+          {!isDeleted &&
+            QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className="msg-toolbar-btn"
+                title={`React with ${emoji}`}
+                onClick={() => onReact(emoji)}
+              >
+                {emoji}
+              </button>
+            ))}
+          {!isDeleted && (
             <button
-              key={emoji}
               type="button"
               className="msg-toolbar-btn"
-              title={`React with ${emoji}`}
-              onClick={() => onReact(emoji)}
+              title="More reactions"
+              onClick={() =>
+                pickerOpen ? setPickerOpen(false) : openPicker()
+              }
             >
-              {emoji}
+              ⊕
             </button>
-          ))}
-          <button
-            type="button"
-            className="msg-toolbar-btn"
-            title="More reactions"
-            onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}
-          >
-            ⊕
-          </button>
+          )}
+          {!isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title="Reply"
+              onClick={onReply}
+            >
+              ↩
+            </button>
+          )}
+          {editable && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title="Edit (15 min window)"
+              onClick={onEdit}
+            >
+              ✏️
+            </button>
+          )}
+          {mine && !isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn danger"
+              title="Delete"
+              onClick={onDelete}
+            >
+              🗑
+            </button>
+          )}
           {pickerOpen && (
             <div
               className={`msg-toolbar-picker ${pickerFlipUp ? "flip-up" : ""}`}
@@ -850,6 +1038,33 @@ function ReadTicks({
       )}
     </span>
   );
+}
+
+// ReplyQuote renders the small "↪ Alice: short preview…" header at
+// the top of a reply bubble. If the original was deleted the body is
+// suppressed and we just render the tomb-stoned hint.
+function ReplyQuote({
+  snippet,
+  userCache,
+}: {
+  snippet: ReplySnippet;
+  userCache: Map<number, UserInfo>;
+}) {
+  const sender = userCache.get(snippet.sender.id) ?? snippet.sender;
+  return (
+    <div className="msg-quote" title={snippet.deleted ? "Deleted message" : snippet.body}>
+      <span className="msg-quote-arrow">↪</span>
+      <span className="msg-quote-sender">{displayNameOf(sender)}</span>
+      <span className="msg-quote-body">
+        {snippet.deleted ? "(deleted message)" : truncate(snippet.body, 80)}
+      </span>
+    </div>
+  );
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
 
 function AttachmentRender({
