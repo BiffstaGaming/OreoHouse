@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.14.0...v0.15.0) (2026-05-21)
+
+
+### Features
+
+* 3 selectable UI themes (Aurora default, Daylight, Classic) ([2f63cba](https://github.com/BiffstaGaming/OreoHouse/commit/2f63cba67d7a0d596c4d5dc683a402d7751a1955))
+* reply quote layout, search filename, media+links gallery, scroll fix ([20baece](https://github.com/BiffstaGaming/OreoHouse/commit/20baece1d65ac1879e9f156481975db14cca63c2))
+* reply quote layout, search filenames, media+links gallery, scrollbar fix ([6b30e16](https://github.com/BiffstaGaming/OreoHouse/commit/6b30e167512d4abf7a3e2b9eca9b1477a153851a))
+
+
+### Bug Fixes
+
+* emoji picker overflow + ensureHistory race in chat-window hydrate ([c6d90e2](https://github.com/BiffstaGaming/OreoHouse/commit/c6d90e2b137a617e32f9a896b1cc05df25b23713))
+
 ## [0.14.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.13.0...v0.14.0) (2026-05-21)
 
 
