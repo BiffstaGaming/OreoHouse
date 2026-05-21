@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.6.0...v0.7.0) (2026-05-21)
+
+
+### Features
+
+* **api:** admin REST endpoints behind requireAdmin ([64ada81](https://github.com/BiffstaGaming/OreoHouse/commit/64ada81fed0273b70988eee3625b0cf5ce1d792e))
+* **api:** embedded /admin/ web UI ([c766101](https://github.com/BiffstaGaming/OreoHouse/commit/c7661019b17636f8fdd8c2ee975ad6e0ef022510))
+* **auth:** is_admin column + admin helpers ([0c529fa](https://github.com/BiffstaGaming/OreoHouse/commit/0c529fa168950004409d75d65e01ff63c2389767))
+* **cli:** bootstrap first user to admin + promote/demote subcommands ([be1e893](https://github.com/BiffstaGaming/OreoHouse/commit/be1e893a007e456a444431c0db6103cfa3a8a283))
+
 ## [0.6.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.5.0...v0.6.0) (2026-05-21)
 
 
