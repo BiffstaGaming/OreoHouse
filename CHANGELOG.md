@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.9.0...v0.10.0) (2026-05-21)
+
+
+### Features
+
+* read receipts — ✓ sent / ✓✓ read ([a061ad7](https://github.com/BiffstaGaming/OreoHouse/commit/a061ad7ee3de5cca2b79b093d7172b64eb8d837e))
+
 ## [0.9.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.8.1...v0.9.0) (2026-05-21)
 
 
