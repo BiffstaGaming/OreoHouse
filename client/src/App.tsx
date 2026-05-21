@@ -24,6 +24,10 @@ import {
   logout,
   uploadFile,
 } from "./lib/api";
+import {
+  flashWindowIfUnfocused,
+  setWindowTitle,
+} from "./lib/tauri";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import type {
   AttachmentView,
@@ -273,18 +277,21 @@ function ChatScreen({
       return prev;
     });
 
-    // Unread counter: only if my own message? Skip; otherwise if the
-    // window for this conv isn't open AND focused, bump the counter.
+    // Unread + OS attention: only if the message isn't mine AND the
+    // user isn't actively looking at the conv (its window open,
+    // un-minimized, and on top).
     if (m.sender.id === session.user.id) return;
     const w = openWindowsRef.current.get(m.conversation_id);
-    const focused = w && !w.minimized && w.zIndex === topZ;
-    if (!focused) {
-      setUnreadByConv((prev) => {
-        const out = new Map(prev);
-        out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
-        return out;
-      });
-    }
+    const focusedConv = w && !w.minimized && w.zIndex === topZ;
+    if (focusedConv) return;
+    setUnreadByConv((prev) => {
+      const out = new Map(prev);
+      out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
+      return out;
+    });
+    // Flash the taskbar / dock when the main window is unfocused so
+    // the user notices even with the app in the background.
+    void flashWindowIfUnfocused();
   }
 
   async function ensureHistory(convID: number) {
@@ -447,6 +454,19 @@ function ChatScreen({
     await logout(session.serverUrl, session.token);
     onSignOut();
   }
+
+  // Total unread across every conversation — prefixed onto the OS
+  // window title MSN-style so the count shows in the taskbar.
+  const totalUnread = useMemo(
+    () =>
+      Array.from(unreadByConv.values()).reduce((sum, n) => sum + n, 0),
+    [unreadByConv],
+  );
+  useEffect(() => {
+    void setWindowTitle(
+      totalUnread > 0 ? `(${totalUnread}) OreoHouse` : "OreoHouse",
+    );
+  }, [totalUnread]);
 
   const openWindowEntries = useMemo(
     () =>
