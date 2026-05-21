@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.15.0...v0.16.0) (2026-05-21)
+
+
+### Features
+
+* **ui:** web themes, search, media+links, profile redesign; desktop theme fixes ([1cf53ce](https://github.com/BiffstaGaming/OreoHouse/commit/1cf53ce73cdd7e0b5bd0cd45c461d7d4fd41ba28))
+* web themes + search + media/links + profile; desktop theme fixes ([8784038](https://github.com/BiffstaGaming/OreoHouse/commit/8784038460ba8db58a618b7f6e7a860a2f1a64a6))
+
 ## [0.15.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.14.0...v0.15.0) (2026-05-21)
 
 
