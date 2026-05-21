@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.5.0...v0.6.0) (2026-05-21)
+
+
+### Features
+
+* **client:** contact-list primary view + floating chat windows ([193e1b9](https://github.com/BiffstaGaming/OreoHouse/commit/193e1b9bb1c8314b7fcc71ef01e2740cc35d24c6))
+* **client:** message + nudge sounds with mute toggle ([d5e6d19](https://github.com/BiffstaGaming/OreoHouse/commit/d5e6d19d971790df3119230e46f8c266eead3f96))
+* **client:** MSN-flavored visual polish ([338bf9a](https://github.com/BiffstaGaming/OreoHouse/commit/338bf9a22eb21910139a546feb18a8ba0989e79c))
+* **client:** system tray + minimize-to-tray ([fbff211](https://github.com/BiffstaGaming/OreoHouse/commit/fbff2117b7ff4b4ca96d23f294bac9a60130fd6a))
+* **client:** taskbar flash + unread-count window title ([0a8949d](https://github.com/BiffstaGaming/OreoHouse/commit/0a8949d3c87869f037f6f47aa3bccefcde4b1f69))
+* **presence:** online / away / busy + custom status text ([bcdcdbf](https://github.com/BiffstaGaming/OreoHouse/commit/bcdcdbf849c49cc8fc6b5e257bd526ef2bca3f46))
+* **ws:** nudges with shake animation ([035b863](https://github.com/BiffstaGaming/OreoHouse/commit/035b863b8d8311954ba28520e77f2dd9a402d0e3))
+* **ws:** typing indicators ([9acff4f](https://github.com/BiffstaGaming/OreoHouse/commit/9acff4f1c99f4ec569654197c781ebbe2f4c386e))
+
 ## [0.5.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.4.1...v0.5.0) (2026-05-21)
 
 
