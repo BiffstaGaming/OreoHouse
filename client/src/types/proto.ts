@@ -57,6 +57,10 @@ export const MessageType = {
   MessageEdited: "message_edited",
   Delete: "delete",
   MessageDeleted: "message_deleted",
+  Pin: "pin",
+  Unpin: "unpin",
+  MessagePinned: "message_pinned",
+  MessageUnpinned: "message_unpinned",
 } as const;
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
@@ -231,6 +235,31 @@ export interface ReplySnippet {
   deleted?: boolean;
 }
 
+// Client→server: pin/unpin a message in a conversation. Server
+// verifies the caller is a member; any member can pin/unpin.
+export interface IncomingPinMessage {
+  type: "pin";
+  message_id: number;
+}
+export interface IncomingUnpinMessage {
+  type: "unpin";
+  message_id: number;
+}
+
+// Server→all-members for pin/unpin events.
+export interface MessagePinnedMessage {
+  type: "message_pinned";
+  conversation_id: number;
+  message_id: number;
+  pinned_by: UserInfo;
+  pinned_at: string;
+}
+export interface MessageUnpinnedMessage {
+  type: "message_unpinned";
+  conversation_id: number;
+  message_id: number;
+}
+
 // Pushed to a user when they're added to a new conversation.
 export interface ConversationAddedMessage {
   type: "conversation_added";
@@ -314,7 +343,9 @@ export type ServerMessage =
   | UserProfileChangedMessage
   | ReactionMessage
   | MessageEditedMessage
-  | MessageDeletedMessage;
+  | MessageDeletedMessage
+  | MessagePinnedMessage
+  | MessageUnpinnedMessage;
 
 export type ClientMessage =
   | PingMessage
@@ -325,7 +356,9 @@ export type ClientMessage =
   | IncomingReadMessage
   | IncomingReactMessage
   | IncomingEditMessage
-  | IncomingDeleteMessage;
+  | IncomingDeleteMessage
+  | IncomingPinMessage
+  | IncomingUnpinMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 

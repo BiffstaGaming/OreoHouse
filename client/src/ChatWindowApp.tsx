@@ -68,6 +68,9 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
   const [shaking, setShaking] = useState(false);
   const [muted, setMuted] = useState(false);
   const [convMuted, setConvMuted] = useState(false);
+  // Set of message ids pinned in this conversation. Hydrated from
+  // the initial payload + kept fresh by IncomingMessage{Un,}Pinned.
+  const [pinned, setPinned] = useState<Set<number>>(new Set());
   // user_id → highest message_id they've read in this conversation.
   const [reads, setReads] = useState<Map<number, number>>(new Map());
   // message_id → reaction groups for that message.
@@ -128,6 +131,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
               rxs.set(Number(mid), groups);
             }
             setReactions(rxs);
+            setPinned(new Set(e.payload.pinned ?? []));
             // Seed userCache from conv members + each message's sender.
             const uc = new Map<number, UserInfo>();
             uc.set(e.payload.session.user.id, e.payload.session.user);
@@ -279,6 +283,30 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
           },
           opts,
         ),
+        await listen<{ message_id: number }>(
+          EVT.IncomingMessagePinned,
+          (e) => {
+            setPinned((prev) => {
+              if (prev.has(e.payload.message_id)) return prev;
+              const next = new Set(prev);
+              next.add(e.payload.message_id);
+              return next;
+            });
+          },
+          opts,
+        ),
+        await listen<{ message_id: number }>(
+          EVT.IncomingMessageUnpinned,
+          (e) => {
+            setPinned((prev) => {
+              if (!prev.has(e.payload.message_id)) return prev;
+              const next = new Set(prev);
+              next.delete(e.payload.message_id);
+              return next;
+            });
+          },
+          opts,
+        ),
         await listen<UserUpdatedPayload>(
           EVT.UserUpdated,
           (e) => {
@@ -386,6 +414,7 @@ export default function ChatWindowApp({ convID }: { convID: number }) {
       reactions={reactions}
       userCache={userCache}
       convMuted={convMuted}
+      pinned={pinned}
     />
   );
 }
@@ -429,6 +458,7 @@ function ChatBody({
   reactions,
   userCache,
   convMuted,
+  pinned,
 }: {
   session: SessionSnapshot;
   conv: ConversationView;
@@ -440,6 +470,7 @@ function ChatBody({
   reactions: Map<number, ReactionGroup[]>;
   userCache: Map<number, UserInfo>;
   convMuted: boolean;
+  pinned: Set<number>;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
@@ -761,11 +792,21 @@ function ChatBody({
               reads={reads}
               reactions={reactions.get(m.id) ?? []}
               userCache={userCache}
+              isPinned={pinned.has(m.id)}
               onReact={(emoji) => sendReact(m.id, emoji)}
               onReply={() => startReply(m)}
               onEdit={() => startEdit(m)}
               onDelete={() => {
                 if (confirm("Delete this message?")) sendDeleteOut(m.id);
+              }}
+              onTogglePin={() => {
+                void emit(
+                  pinned.has(m.id) ? EVT.OutgoingUnpin : EVT.OutgoingPin,
+                  {
+                    conversation_id: convID,
+                    message_id: m.id,
+                  },
+                );
               }}
             />
           ))
@@ -897,10 +938,12 @@ function MessageRow({
   reads,
   reactions,
   userCache,
+  isPinned,
   onReact,
   onReply,
   onEdit,
   onDelete,
+  onTogglePin,
 }: {
   m: MessageView;
   session: SessionSnapshot;
@@ -908,10 +951,12 @@ function MessageRow({
   reads: Map<number, number>;
   reactions: ReactionGroup[];
   userCache: Map<number, UserInfo>;
+  isPinned: boolean;
   onReact: (emoji: string) => void;
   onReply: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onTogglePin: () => void;
 }) {
   const mine = m.sender.id === session.user.id;
   const sender = userCache.get(m.sender.id) ?? m.sender;
@@ -958,6 +1003,11 @@ function MessageRow({
             <span className="msg-sender">
               {mine ? "you" : displayNameOf(sender)}
             </span>
+            {isPinned && (
+              <span className="msg-pinned-badge" title="Pinned">
+                📌
+              </span>
+            )}
             <span className="msg-time">{formatTime(m.created_at)}</span>
           </div>
           {isDeleted ? (
@@ -1046,6 +1096,16 @@ function MessageRow({
               onClick={onEdit}
             >
               ✏️
+            </button>
+          )}
+          {!isDeleted && (
+            <button
+              type="button"
+              className="msg-toolbar-btn"
+              title={isPinned ? "Unpin from conversation" : "Pin to conversation"}
+              onClick={onTogglePin}
+            >
+              {isPinned ? "📍" : "📌"}
             </button>
           )}
           {mine && !isDeleted && (

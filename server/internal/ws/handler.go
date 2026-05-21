@@ -255,6 +255,10 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleEdit(ctx, c, data)
 		case proto.TypeDelete:
 			h.handleDelete(ctx, c, data)
+		case proto.TypePin:
+			h.handlePin(ctx, c, data)
+		case proto.TypeUnpin:
+			h.handleUnpin(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
@@ -555,6 +559,90 @@ func (h *Handler) handleDelete(ctx context.Context, c *Client, raw []byte) {
 	ids := make([]int64, 0, len(members))
 	for _, m := range members {
 		ids = append(ids, m.UserID)
+	}
+	h.hub.SendToUsers(b, ids)
+}
+
+// handlePin and handleUnpin toggle the pin bit on a message — any
+// member of the conversation can pin/unpin. Broadcasts the result so
+// every client's pinned strip stays in sync.
+func (h *Handler) handlePin(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingPinMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return
+	}
+	if in.MessageID <= 0 {
+		return
+	}
+	m, err := h.messages.Get(ctx, in.MessageID)
+	if err != nil {
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, m.ConversationID, c.user.ID)
+	if err != nil || !ok {
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "not a member of conversation")
+		return
+	}
+	added, err := h.messages.AddPin(ctx, m.ConversationID, m.ID, c.user.ID)
+	if err != nil {
+		slog.Error("ws: add pin failed", "error", err)
+		return
+	}
+	if !added {
+		return
+	}
+	members, _ := h.convs.Members(ctx, m.ConversationID)
+	out := proto.MessagePinnedMessage{
+		Type:           proto.TypeMessagePinned,
+		ConversationID: m.ConversationID,
+		MessageID:      m.ID,
+		PinnedBy:       userToInfo(c.user),
+		PinnedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	ids := make([]int64, 0, len(members))
+	for _, mm := range members {
+		ids = append(ids, mm.UserID)
+	}
+	h.hub.SendToUsers(b, ids)
+}
+
+func (h *Handler) handleUnpin(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingUnpinMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return
+	}
+	if in.MessageID <= 0 {
+		return
+	}
+	m, err := h.messages.Get(ctx, in.MessageID)
+	if err != nil {
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, m.ConversationID, c.user.ID)
+	if err != nil || !ok {
+		return
+	}
+	removed, err := h.messages.RemovePin(ctx, m.ConversationID, m.ID)
+	if err != nil || !removed {
+		return
+	}
+	members, _ := h.convs.Members(ctx, m.ConversationID)
+	out := proto.MessageUnpinnedMessage{
+		Type:           proto.TypeMessageUnpinned,
+		ConversationID: m.ConversationID,
+		MessageID:      m.ID,
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	ids := make([]int64, 0, len(members))
+	for _, mm := range members {
+		ids = append(ids, mm.UserID)
 	}
 	h.hub.SendToUsers(b, ids)
 }

@@ -114,3 +114,16 @@ type ListMessagesResponse struct {
 type SearchResponse struct {
 	Results []MessageView `json:"results"`
 }
+
+// PinView is one pinned message — the full MessageView plus the pin
+// timestamp and the user who pinned it.
+type PinView struct {
+	Message  MessageView `json:"message"`
+	PinnedBy UserInfo    `json:"pinned_by"`
+	PinnedAt string      `json:"pinned_at"`
+}
+
+// ListPinsResponse is the body of GET /api/conversations/{id}/pins.
+type ListPinsResponse struct {
+	Pins []PinView `json:"pins"`
+}

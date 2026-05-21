@@ -346,6 +346,12 @@ function ChatScreen({
   const [reactions, setReactions] = useState<Map<number, ReactionGroup[]>>(
     new Map(),
   );
+  // Per-conv set of pinned message ids. Hydrated lazily via the REST
+  // pins endpoint when a chat window opens; kept fresh by the live
+  // message_pinned / message_unpinned events.
+  const [pinned, setPinned] = useState<Map<number, Set<number>>>(new Map());
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   // Set of conv IDs the user has individually muted (suppresses sound
@@ -539,6 +545,7 @@ function ChatScreen({
             conv_muted: mutedConvsRef.current.has(cid),
             reads: readsObj,
             reactions: reactionsObj,
+            pinned: Array.from(pinnedRef.current.get(cid) ?? new Set()),
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -569,6 +576,26 @@ function ChatScreen({
             if (!wsRef.current) return;
             wsRef.current.send({
               type: "delete",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<{ message_id: number }>>(
+          EVT.OutgoingPin,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "pin",
+              message_id: e.payload.message_id,
+            });
+          },
+        ),
+        await listen<ChatToMainEnvelope<{ message_id: number }>>(
+          EVT.OutgoingUnpin,
+          (e) => {
+            if (!wsRef.current) return;
+            wsRef.current.send({
+              type: "unpin",
               message_id: e.payload.message_id,
             });
           },
@@ -846,6 +873,41 @@ function ChatScreen({
             edited_at: msg.edited_at,
           };
           void emitTo(`chat-${cid}`, EVT.IncomingMessageEdited, payload);
+        }
+        return;
+      }
+      case "message_pinned": {
+        const cid = msg.conversation_id;
+        setPinned((prev) => {
+          const next = new Set<number>(prev.get(cid) ?? []);
+          next.add(msg.message_id);
+          const out = new Map(prev);
+          out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          void emitTo(`chat-${cid}`, EVT.IncomingMessagePinned, {
+            message_id: msg.message_id,
+          });
+        }
+        return;
+      }
+      case "message_unpinned": {
+        const cid = msg.conversation_id;
+        setPinned((prev) => {
+          const cur = prev.get(cid);
+          if (!cur) return prev;
+          const next = new Set(cur);
+          next.delete(msg.message_id);
+          const out = new Map(prev);
+          if (next.size === 0) out.delete(cid);
+          else out.set(cid, next);
+          return out;
+        });
+        if (openChatsRef.current.has(cid)) {
+          void emitTo(`chat-${cid}`, EVT.IncomingMessageUnpinned, {
+            message_id: msg.message_id,
+          });
         }
         return;
       }

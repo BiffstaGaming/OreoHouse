@@ -23,6 +23,10 @@ const (
 	TypeMessageEdited              = "message_edited"
 	TypeDelete                     = "delete"
 	TypeMessageDeleted             = "message_deleted"
+	TypePin                        = "pin"
+	TypeUnpin                      = "unpin"
+	TypeMessagePinned              = "message_pinned"
+	TypeMessageUnpinned            = "message_unpinned"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -215,6 +219,35 @@ type MessageDeletedMessage struct {
 	MessageID      int64  `json:"message_id"`
 	ConversationID int64  `json:"conversation_id"`
 	DeletedAt      string `json:"deleted_at"`
+}
+
+// IncomingPinMessage is the client→server "pin" envelope — pin a
+// message in a conversation the sender is a member of.
+type IncomingPinMessage struct {
+	Type      string `json:"type"`
+	MessageID int64  `json:"message_id"`
+}
+
+// IncomingUnpinMessage is the client→server "unpin" envelope.
+type IncomingUnpinMessage struct {
+	Type      string `json:"type"`
+	MessageID int64  `json:"message_id"`
+}
+
+// MessagePinnedMessage is server→all-members for a new pin.
+type MessagePinnedMessage struct {
+	Type           string   `json:"type"`
+	ConversationID int64    `json:"conversation_id"`
+	MessageID      int64    `json:"message_id"`
+	PinnedBy       UserInfo `json:"pinned_by"`
+	PinnedAt       string   `json:"pinned_at"`
+}
+
+// MessageUnpinnedMessage is server→all-members for an unpin.
+type MessageUnpinnedMessage struct {
+	Type           string `json:"type"`
+	ConversationID int64  `json:"conversation_id"`
+	MessageID      int64  `json:"message_id"`
 }
 
 // OutgoingMessage is the server→every-member "message" envelope.

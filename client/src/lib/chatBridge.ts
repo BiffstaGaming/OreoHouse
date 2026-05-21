@@ -50,6 +50,8 @@ export type HydratePayload = {
   // Initial per-message reaction summary for the conversation's
   // loaded history. Keyed by message_id.
   reactions: Record<number, ReactionGroup[]>;
+  // Initial set of pinned message ids in this conversation.
+  pinned: number[];
 };
 
 export type MessagePayload = {
@@ -147,6 +149,8 @@ export const EVT = {
   IncomingReaction: "oreo:chat:reaction",
   IncomingMessageEdited: "oreo:chat:message_edited",
   IncomingMessageDeleted: "oreo:chat:message_deleted",
+  IncomingMessagePinned: "oreo:chat:message_pinned",
+  IncomingMessageUnpinned: "oreo:chat:message_unpinned",
   UserUpdated: "oreo:chat:user_updated",
   MembersChanged: "oreo:chat:members_changed",
   ConvUpdated: "oreo:chat:conv_updated",
@@ -160,6 +164,8 @@ export const EVT = {
   OutgoingReact: "oreo:chat:react_out",
   OutgoingEdit: "oreo:chat:edit_out",
   OutgoingDelete: "oreo:chat:delete_out",
+  OutgoingPin: "oreo:chat:pin_out",
+  OutgoingUnpin: "oreo:chat:unpin_out",
   ToggleConvMute: "oreo:chat:toggle_conv_mute",
   Focused: "oreo:chat:focused",
   Leave: "oreo:chat:leave",

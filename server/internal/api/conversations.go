@@ -80,6 +80,7 @@ func (h *ConversationsHandler) Mount(r chi.Router) {
 		r.Post("/api/conversations/{id}/members", h.addMembers)
 		r.Post("/api/conversations/{id}/leave", h.leave)
 		r.Get("/api/conversations/{id}/messages", h.listMessages)
+		r.Get("/api/conversations/{id}/pins", h.listPins)
 		r.Get("/api/rooms", h.listRooms)
 		r.Post("/api/rooms/{id}/join", h.joinRoom)
 	})
@@ -215,6 +216,45 @@ func (h *ConversationsHandler) listMessages(w http.ResponseWriter, r *http.Reque
 		out[i] = view
 	}
 	writeJSON(w, http.StatusOK, proto.ListMessagesResponse{Messages: out})
+}
+
+// listPins handles GET /api/conversations/{id}/pins. Returns each
+// pinned message hydrated with its sender + body (using the same
+// member-cache pattern as listMessages). Newest pin first.
+func (h *ConversationsHandler) listPins(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.requireMembership(w, r, convID, me.ID); err != nil {
+		return
+	}
+	pins, err := h.messages.ListPins(r.Context(), convID)
+	if err != nil {
+		slog.Error("list pins failed", "error", err, "conv_id", convID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	members, err := h.convs.Members(r.Context(), convID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]proto.PinView, 0, len(pins))
+	for _, p := range pins {
+		msg, err := h.messages.Get(r.Context(), p.MessageID)
+		if err != nil {
+			// Pin row got orphaned by ON DELETE CASCADE; skip.
+			continue
+		}
+		out = append(out, proto.PinView{
+			Message:  messageToView(msg, members),
+			PinnedBy: senderInfo(p.PinnedBy, members),
+			PinnedAt: p.PinnedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	writeJSON(w, http.StatusOK, proto.ListPinsResponse{Pins: out})
 }
 
 // buildReplySnippet — REST-side variant of the WS handler's helper.
