@@ -612,3 +612,619 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
     100% { transform: translate(0, 0); }
 }
 .shake { animation: shake 0.55s linear; }
+
+/* ---- TOPBAR BRAND ICON / SEARCH BUTTON ---- */
+.topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.topbar-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    object-fit: cover;
+    user-select: none;
+}
+.topbar-icon-btn {
+    background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.25);
+    color: #fff;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.topbar-icon-btn:hover { background: rgba(255,255,255,.24); }
+
+/* Login screen wordmark image (replaces the 🍪 emoji). */
+.brand-logo {
+    width: 12rem;
+    max-width: 70vw;
+    height: auto;
+    display: block;
+    margin: 0 auto 0.6rem;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* ---- PROFILE MODAL — avatar preview + theme picker ---- */
+.profile-avatar-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.profile-avatar-row .avatar {
+    width: 5rem;
+    height: 5rem;
+    font-size: 1.6rem;
+    border: 1px solid var(--msn-border);
+}
+.profile-avatar-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+}
+.profile-avatar-actions button.danger {
+    /* Compact red — same hue as desktop's danger but tuned for
+     * legibility on every theme (was unreadable on Aurora). */
+    background: rgba(220, 70, 70, 0.16);
+    border: 1px solid rgba(220, 70, 70, 0.55);
+    color: #ff6f6f;
+    font-weight: 600;
+}
+.profile-avatar-actions button.danger:hover:not(:disabled) {
+    background: rgba(220, 70, 70, 0.28);
+}
+
+.theme-picker {
+    border: 1px solid var(--msn-border);
+    border-radius: 0.5rem;
+    padding: 0.4rem 0.55rem 0.55rem;
+    margin: 0 0 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.theme-picker legend {
+    padding: 0 0.3rem;
+    font-size: 0.72rem;
+    color: var(--msn-text-muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+.theme-option {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--msn-border-soft);
+    border-radius: 0.4rem;
+    cursor: pointer;
+    user-select: none;
+    background: transparent;
+    transition: border-color 0.12s, background 0.12s;
+    font-size: 0.85rem;
+}
+.theme-option:hover {
+    border-color: var(--msn-blue-light);
+    background: rgba(120, 140, 200, 0.08);
+}
+.theme-option-active {
+    border-color: var(--msn-blue);
+    background: rgba(120, 140, 200, 0.14);
+}
+.theme-option input[type="radio"] {
+    accent-color: var(--msn-blue);
+    margin: 0;
+}
+.theme-swatch {
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 0.3rem;
+    border: 1px solid rgba(0,0,0,.18);
+    flex: 0 0 auto;
+}
+.theme-swatch-aurora {
+    background: linear-gradient(135deg, #5b3eff 0%, #8b6cff 60%, #00bcd4 110%), #0e1117;
+}
+.theme-swatch-daylight {
+    background: linear-gradient(135deg, #38bdf8, #0ea5e9 70%, #fff);
+    border-color: #cdd5e0;
+}
+.theme-swatch-classic {
+    background: linear-gradient(180deg, #4a8de8, #2c5dab);
+}
+.theme-meta {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.4rem;
+    min-width: 0;
+    flex: 1;
+}
+.theme-label { font-weight: 600; color: var(--msn-text); }
+.theme-tagline {
+    font-size: 0.78rem;
+    color: var(--msn-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+/* ---- SEARCH MODAL ---- */
+.search-modal {
+    width: min(40rem, 96vw);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+}
+.search-modal h2 {
+    margin: 0;
+    padding: 0.7rem 1rem;
+    background: linear-gradient(180deg, var(--msn-blue-light), var(--msn-blue));
+    color: #fff;
+    border-bottom: 1px solid var(--msn-blue-dark);
+    font-size: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.search-modal h2 .search-modal-close {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.3);
+    color: #fff;
+    padding: 0 0.5rem;
+    font-size: 1rem;
+}
+.search-modal-body {
+    padding: 0.8rem 1rem;
+    overflow-y: auto;
+}
+.search-input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    font: inherit;
+    border: 1px solid var(--msn-border);
+    border-radius: 0.3rem;
+    background: var(--msn-bg-soft);
+    color: var(--msn-text);
+    margin-bottom: 0.6rem;
+}
+.search-input:focus {
+    outline: none;
+    border-color: var(--msn-blue-light);
+    box-shadow: 0 0 0 2px rgba(74, 141, 232, .25);
+}
+.search-results { list-style: none; margin: 0; padding: 0; }
+.search-result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    background: var(--msn-bg-soft);
+    border: 1px solid var(--msn-border-soft);
+    border-radius: 0.35rem;
+    margin-bottom: 0.3rem;
+    cursor: pointer;
+    color: inherit;
+}
+.search-result:hover { background: rgba(120,140,200,.1); border-color: var(--msn-blue-light); }
+.search-result-meta {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.74rem;
+    color: var(--msn-text-muted);
+    margin-bottom: 0.2rem;
+}
+.search-result-conv { font-weight: 600; color: var(--msn-blue-light); }
+.search-result-time { margin-left: auto; }
+.search-result-body {
+    font-size: 0.88rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.search-result-files {
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--msn-text-muted);
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+}
+
+/* ---- MEDIA + LINKS PANEL ---- */
+.ml-modal {
+    width: min(44rem, 96vw);
+    padding: 0;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+}
+.ml-modal h2 {
+    margin: 0;
+    padding: 0.7rem 1rem;
+    background: linear-gradient(180deg, var(--msn-blue-light), var(--msn-blue));
+    color: #fff;
+    border-bottom: 1px solid var(--msn-blue-dark);
+    font-size: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ml-modal h2 .ml-modal-close {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,.3);
+    color: #fff;
+    padding: 0 0.5rem;
+    font-size: 1rem;
+}
+.ml-tabs {
+    display: flex;
+    padding: 0 0.6rem;
+    border-bottom: 1px solid var(--msn-border);
+    background: var(--msn-bg-soft);
+}
+.ml-tab {
+    border: none;
+    background: transparent;
+    padding: 0.55rem 0.9rem;
+    font-weight: 600;
+    color: var(--msn-text-muted);
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+}
+.ml-tab:hover { color: var(--msn-text); background: transparent; border-color: transparent; }
+.ml-tab-active { color: var(--msn-blue); border-bottom-color: var(--msn-blue); }
+.ml-body { padding: 0.8rem 1rem; overflow-y: auto; }
+.ml-section-title {
+    margin: 0.3rem 0 0.5rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--msn-text-muted);
+    font-weight: 700;
+}
+.ml-image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+.ml-image-tile {
+    display: block;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border: 1px solid var(--msn-border);
+    border-radius: 0.4rem;
+    background: var(--msn-bg-soft);
+}
+.ml-image-tile img { width: 100%; height: 100%; object-fit: cover; }
+.ml-image-tile:hover img { transform: scale(1.04); transition: transform .18s; }
+.ml-file-list, .ml-link-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.ml-file-row, .ml-link-row {
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--msn-border-soft);
+    border-radius: 0.35rem;
+    background: var(--msn-bg-soft);
+    color: var(--msn-text);
+    text-decoration: none;
+    align-items: center;
+}
+.ml-file-row:hover, .ml-link-row:hover {
+    background: rgba(120,140,200,.1);
+    border-color: var(--msn-blue-light);
+}
+.ml-file-icon { font-size: 1.15rem; opacity: 0.7; }
+.ml-file-meta { display: flex; flex-direction: column; min-width: 0; }
+.ml-file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ml-file-sub, .ml-link-sub { color: var(--msn-text-muted); font-size: 0.78rem; }
+.ml-link-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 0.1rem 0.7rem;
+}
+.ml-link-host {
+    grid-row: 1 / span 2;
+    align-self: center;
+    background: var(--msn-blue);
+    color: #fff;
+    padding: 0.22rem 0.45rem;
+    border-radius: 0.3rem;
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: lowercase;
+    white-space: nowrap;
+}
+.ml-link-url { grid-column: 2; grid-row: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ml-link-sub { grid-column: 2; grid-row: 2; }
+
+/* ==========================================================================
+ * THEMES
+ *
+ * Aurora is the default. The CSS *above* this point assumes the
+ * MSN-flavoured palette (now the Classic theme); themes below
+ * override the --msn-* tokens AND the specific surfaces that
+ * hardcode bevel gradients so each theme reads as a distinct look.
+ *
+ * lib/theme.js sets `data-theme="<name>"` on documentElement.
+ * ========================================================================== */
+
+/* --- AURORA (default) — modern dark, flat, violet accent ---------------- */
+:root[data-theme="aurora"] {
+    --msn-blue:        #8b6cff;
+    --msn-blue-light:  #a48dff;
+    --msn-blue-dark:   #6b4dff;
+    --msn-bg:          #0e1117;
+    --msn-bg-soft:     #161b22;
+    --msn-text:        #e6ecf7;
+    --msn-text-muted:  #8b96b0;
+    --msn-border:      #232b3a;
+    --msn-border-soft: #1c2330;
+    --msn-mine:        transparent;
+    --msn-theirs:      #1a2030;
+    color-scheme: dark;
+}
+:root[data-theme="aurora"] body { background: var(--msn-bg); color: var(--msn-text); }
+:root[data-theme="aurora"] .topbar {
+    background: linear-gradient(180deg, #1b2230, #161b22);
+    color: var(--msn-text);
+    border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="aurora"] .topbar-icon-btn {
+    background: #232b3a;
+    border-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .topbar-icon-btn:hover { background: #2b3548; }
+:root[data-theme="aurora"] button {
+    background: #1f2733;
+    border: 1px solid var(--msn-border);
+    color: var(--msn-text);
+    border-radius: 0.5rem;
+}
+:root[data-theme="aurora"] button:hover:not(:disabled) {
+    background: #2a3445;
+    border-color: var(--msn-blue);
+}
+:root[data-theme="aurora"] button.primary {
+    background: linear-gradient(135deg, #5b3eff 0%, #8b6cff 100%);
+    border-color: transparent;
+    color: #fff;
+}
+:root[data-theme="aurora"] button.primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #4f33ec 0%, #7a5cf2 100%);
+}
+:root[data-theme="aurora"] .login-body {
+    background:
+        radial-gradient(circle at 20% 10%, #1f1538 0%, transparent 50%),
+        radial-gradient(circle at 80% 90%, #0e2236 0%, transparent 55%),
+        var(--msn-bg);
+}
+:root[data-theme="aurora"] .login-card {
+    background: #161b22;
+    border-color: var(--msn-border);
+}
+:root[data-theme="aurora"] input,
+:root[data-theme="aurora"] textarea {
+    background: #1a2030;
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="aurora"] .sidebar { background: #11151d; border-right-color: var(--msn-border); }
+:root[data-theme="aurora"] .contact:hover { background: #1c2330; border-color: var(--msn-border); }
+:root[data-theme="aurora"] .contact-open {
+    background: linear-gradient(to right, rgba(139,108,255,.18), transparent 90%);
+    border-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .chat-header {
+    background: linear-gradient(180deg, #1b2230, #161b22);
+    color: var(--msn-text);
+    border-bottom-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .chat-name { color: var(--msn-text); }
+:root[data-theme="aurora"] .msg-bubble {
+    background: #1a2030;
+    border-color: var(--msn-border);
+    border-radius: 0.75rem;
+}
+:root[data-theme="aurora"] .msg-mine .msg-bubble {
+    background: linear-gradient(135deg, #5b3eff 0%, #8b6cff 100%);
+    border-color: transparent;
+    color: #fff;
+}
+:root[data-theme="aurora"] .msg-mine .msg-author,
+:root[data-theme="aurora"] .msg-mine .msg-time { color: rgba(255,255,255,.85); }
+:root[data-theme="aurora"] .composer { background: var(--msn-bg-soft); border-top-color: var(--msn-border); }
+:root[data-theme="aurora"] .composer-icon-btn {
+    background: #232b3a;
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="aurora"] .composer-icon-btn:hover { background: #2b3548; }
+:root[data-theme="aurora"] .composer-send {
+    background: linear-gradient(135deg, #5b3eff 0%, #8b6cff 100%);
+    border-color: transparent;
+}
+:root[data-theme="aurora"] .composer-send:hover { background: linear-gradient(135deg, #4f33ec 0%, #7a5cf2 100%); }
+:root[data-theme="aurora"] .reaction-pill {
+    background: rgba(139,108,255,.16);
+    border-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .reaction-mine {
+    background: rgba(139,108,255,.32);
+    border-color: var(--msn-blue);
+}
+:root[data-theme="aurora"] .modal {
+    background: #161b22;
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="aurora"] .modal h2 { color: var(--msn-text); }
+:root[data-theme="aurora"] .search-modal h2,
+:root[data-theme="aurora"] .ml-modal h2 {
+    background: linear-gradient(180deg, #1b2230, #161b22);
+    color: var(--msn-text);
+    border-bottom-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .ml-tabs { background: #161b22; border-bottom-color: var(--msn-border); }
+:root[data-theme="aurora"] .ml-tab-active { color: var(--msn-blue-light); border-bottom-color: var(--msn-blue); }
+:root[data-theme="aurora"] .search-result { background: #1a2030; border-color: var(--msn-border); }
+:root[data-theme="aurora"] .ml-file-row,
+:root[data-theme="aurora"] .ml-link-row { background: #1a2030; border-color: var(--msn-border); }
+
+/* --- DAYLIGHT — modern light, flat, sky-blue accent --------------------- */
+:root[data-theme="daylight"] {
+    --msn-blue:        #0ea5e9;
+    --msn-blue-light:  #38bdf8;
+    --msn-blue-dark:   #0284c7;
+    --msn-bg:          #f6f8fc;
+    --msn-bg-soft:     #ffffff;
+    --msn-text:        #16213a;
+    --msn-text-muted:  #64748b;
+    --msn-border:      #e2e8f0;
+    --msn-border-soft: #eef1f6;
+    --msn-mine:        transparent;
+    --msn-theirs:      #ffffff;
+    color-scheme: light;
+}
+:root[data-theme="daylight"] body { background: var(--msn-bg); color: var(--msn-text); }
+:root[data-theme="daylight"] .topbar {
+    background: var(--msn-bg-soft);
+    color: var(--msn-text);
+    border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="daylight"] .topbar-self {
+    background: rgba(14,165,233,.1);
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .topbar-link { color: var(--msn-text); }
+:root[data-theme="daylight"] .topbar-link:hover { background: rgba(14,165,233,.1); }
+:root[data-theme="daylight"] .topbar-icon-btn {
+    background: rgba(14,165,233,.08);
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .topbar-icon-btn:hover { background: rgba(14,165,233,.18); }
+:root[data-theme="daylight"] button {
+    background: var(--msn-bg-soft);
+    border: 1px solid var(--msn-border);
+    color: var(--msn-text);
+    border-radius: 0.5rem;
+}
+:root[data-theme="daylight"] button:hover:not(:disabled) {
+    background: #f1f5fb;
+    border-color: var(--msn-blue);
+}
+:root[data-theme="daylight"] button.primary {
+    background: var(--msn-blue);
+    border-color: transparent;
+    color: #fff;
+}
+:root[data-theme="daylight"] button.primary:hover:not(:disabled) { background: var(--msn-blue-dark); }
+:root[data-theme="daylight"] .login-body {
+    background:
+        radial-gradient(circle at 20% 10%, #d3eafd 0%, transparent 50%),
+        radial-gradient(circle at 80% 90%, #cce4ff 0%, transparent 55%),
+        var(--msn-bg);
+}
+:root[data-theme="daylight"] .login-card {
+    background: var(--msn-bg-soft);
+    border-color: var(--msn-border);
+}
+:root[data-theme="daylight"] input,
+:root[data-theme="daylight"] textarea {
+    background: var(--msn-bg-soft);
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .sidebar { background: var(--msn-bg-soft); border-right-color: var(--msn-border); }
+:root[data-theme="daylight"] .contact:hover { background: #f1f5fb; border-color: var(--msn-border); }
+:root[data-theme="daylight"] .contact-open {
+    background: linear-gradient(to right, rgba(14,165,233,.16), transparent 90%);
+    border-color: var(--msn-border);
+}
+:root[data-theme="daylight"] .chat-header {
+    background: var(--msn-bg-soft);
+    color: var(--msn-text);
+    border-bottom-color: var(--msn-border);
+}
+:root[data-theme="daylight"] .chat-name { color: var(--msn-text); }
+:root[data-theme="daylight"] .msg-bubble {
+    background: var(--msn-bg-soft);
+    border-color: var(--msn-border);
+    border-radius: 0.85rem;
+    box-shadow: 0 1px 2px rgba(20,30,60,.05);
+}
+:root[data-theme="daylight"] .msg-mine .msg-bubble {
+    background: var(--msn-blue);
+    border-color: transparent;
+    color: #fff;
+}
+:root[data-theme="daylight"] .msg-mine .msg-author,
+:root[data-theme="daylight"] .msg-mine .msg-time { color: rgba(255,255,255,.9); }
+:root[data-theme="daylight"] .composer { background: var(--msn-bg-soft); border-top-color: var(--msn-border); }
+:root[data-theme="daylight"] .composer-icon-btn {
+    background: var(--msn-bg-soft);
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .composer-icon-btn:hover { background: #f1f5fb; }
+:root[data-theme="daylight"] .composer-send {
+    background: var(--msn-blue);
+    border-color: transparent;
+}
+:root[data-theme="daylight"] .composer-send:hover { background: var(--msn-blue-dark); }
+:root[data-theme="daylight"] .reaction-pill { background: rgba(14,165,233,.1); border-color: var(--msn-border); }
+:root[data-theme="daylight"] .reaction-mine { background: rgba(14,165,233,.22); border-color: var(--msn-blue); }
+:root[data-theme="daylight"] .modal {
+    background: var(--msn-bg-soft);
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .search-modal h2,
+:root[data-theme="daylight"] .ml-modal h2 {
+    background: var(--msn-bg-soft);
+    color: var(--msn-text);
+    border-bottom-color: var(--msn-border);
+}
+:root[data-theme="daylight"] .search-modal h2 .search-modal-close,
+:root[data-theme="daylight"] .ml-modal h2 .ml-modal-close {
+    border-color: var(--msn-border);
+    color: var(--msn-text);
+}
+:root[data-theme="daylight"] .ml-tabs { background: var(--msn-bg-soft); border-bottom-color: var(--msn-border); }
+:root[data-theme="daylight"] .search-result { background: var(--msn-bg-soft); border-color: var(--msn-border); }
+:root[data-theme="daylight"] .ml-file-row,
+:root[data-theme="daylight"] .ml-link-row { background: var(--msn-bg-soft); border-color: var(--msn-border); }
+
+/* --- CLASSIC — the original MSN look (no override needed for tokens;
+ *   the un-themed CSS already paints classic). Use [data-theme="classic"]
+ *   to force it even when system prefers dark. */
+:root[data-theme="classic"] {
+    --msn-bg:          #eef4ff;
+    --msn-bg-soft:     #f6f9ff;
+    --msn-text:        #1a2940;
+    --msn-text-muted:  #5e6c84;
+    --msn-border:      #c3d4ee;
+    --msn-border-soft: #dfe7f5;
+    --msn-mine:        #e0ecff;
+    --msn-theirs:      #ffffff;
+    color-scheme: light;
+}
+:root[data-theme="classic"] body { background: var(--msn-bg); color: var(--msn-text); }

@@ -69,8 +69,16 @@
         root.innerHTML = '';
 
         const topbar = UI.el('header', { class: 'topbar' }, [
-            UI.el('div', { class: 'topbar-brand' }, '🍪 OreoHouse'),
+            UI.el('div', { class: 'topbar-brand' }, [
+                UI.el('img', { class: 'topbar-icon', src: '/assets/img/icon.png', alt: '' }),
+                UI.el('span', { text: 'OreoHouse' }),
+            ]),
             UI.el('div', { class: 'topbar-spacer' }),
+            UI.el('button', {
+                class: 'topbar-icon-btn',
+                title: 'Search messages (Ctrl+K)',
+                onclick: openSearchModal,
+            }, '🔍'),
             UI.el('button', { class: 'topbar-self', onclick: openProfileModal }, [
                 wrapAvatar(state.me, 28),
                 UI.el('span', { class: 'self-label', text: UI.displayLabel(state.me) }),
@@ -301,6 +309,12 @@
                 conv.topic ? UI.el('span', { class: 'chat-topic', text: conv.topic }) : null,
             ]),
             UI.el('div', { class: 'chat-meta', text: memberSummary(conv) }),
+            UI.el('button', {
+                class: 'composer-icon-btn',
+                title: 'Media & links in this conversation',
+                onclick: function () { openMediaPanel(convID); },
+                style: 'margin-left:0.5rem;',
+            }, '🖼️'),
         ]);
 
         const log = UI.el('div', { class: 'message-log', id: 'message-log' });
@@ -716,11 +730,47 @@
         document.addEventListener('keydown', escClose);
     }
 
+    // ---- theme system ----------------------------------------------
+
+    const THEMES = [
+        { name: 'aurora',   label: 'Aurora',   tagline: 'Modern dark — deep navy with a violet accent' },
+        { name: 'daylight', label: 'Daylight', tagline: 'Modern light — clean off-white with sky-blue' },
+        { name: 'classic',  label: 'Classic',  tagline: 'MSN throwback — bevels and blue gradients' },
+    ];
+    const DEFAULT_THEME = 'aurora';
+    const THEME_KEY = 'oreohouse-theme';
+
+    function loadTheme() {
+        try {
+            const raw = localStorage.getItem(THEME_KEY);
+            if (raw === 'aurora' || raw === 'daylight' || raw === 'classic') return raw;
+        } catch (_) { /* private mode etc */ }
+        return DEFAULT_THEME;
+    }
+    function saveTheme(name) {
+        try { localStorage.setItem(THEME_KEY, name); } catch (_) {}
+    }
+    function applyTheme(name) {
+        document.documentElement.setAttribute('data-theme', name);
+    }
+
+    // Apply on boot so the first paint is right.
+    applyTheme(loadTheme());
+
     // ---- profile modal ---------------------------------------------
 
     function openProfileModal() {
         document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
         const me = state.users.get(state.me.id) || state.me;
+        const currentTheme = loadTheme();
+
+        // Avatar preview at the top. Re-rendered after upload/remove.
+        const avatarWrap = UI.el('div', { class: 'profile-avatar-preview' });
+        function repaintAvatar(user) {
+            avatarWrap.innerHTML = '';
+            avatarWrap.appendChild(UI.avatar(user, 80));
+        }
+        repaintAvatar(me);
 
         const displayInput = UI.el('input', {
             type: 'text',
@@ -731,37 +781,96 @@
         const avatarUpload = UI.el('input', {
             type: 'file',
             accept: 'image/*',
+            style: 'display:none;',
+            onchange: async function (ev) {
+                const file = ev.target.files && ev.target.files[0];
+                if (!file) return;
+                try {
+                    const updated = await API.uploadAvatar(file);
+                    state.users.set(updated.id, updated);
+                    if (state.me.id === updated.id) state.me = updated;
+                    repaintAvatar(updated);
+                } catch (e) {
+                    alert('Upload failed: ' + e.message);
+                }
+                ev.target.value = '';
+            },
         });
+
+        async function removeAvatar() {
+            try {
+                const updated = await API.deleteAvatar();
+                state.users.set(updated.id, updated);
+                if (state.me.id === updated.id) state.me = updated;
+                repaintAvatar(updated);
+            } catch (e) {
+                alert('Remove failed: ' + e.message);
+            }
+        }
 
         async function save() {
             try {
                 await API.setProfile(displayInput.value.trim());
-                if (avatarUpload.files && avatarUpload.files[0]) {
-                    await API.uploadAvatar(avatarUpload.files[0]);
-                }
                 backdrop.remove();
             } catch (e) {
                 alert('Save failed: ' + e.message);
             }
         }
 
-        async function removeAvatar() {
-            try {
-                await API.deleteAvatar();
-                backdrop.remove();
-            } catch (e) {
-                alert('Remove failed: ' + e.message);
-            }
+        // Build the theme radio rows.
+        const themeOptions = UI.el('div', { class: 'theme-options' });
+        function rebuildThemeRows(selected) {
+            themeOptions.innerHTML = '';
+            THEMES.forEach(function (t) {
+                const isActive = t.name === selected;
+                const row = UI.el('label', {
+                    class: 'theme-option' + (isActive ? ' theme-option-active' : ''),
+                    onclick: function () {
+                        applyTheme(t.name);
+                        saveTheme(t.name);
+                        rebuildThemeRows(t.name);
+                    },
+                }, [
+                    UI.el('input', {
+                        type: 'radio',
+                        name: 'oreohouse-theme',
+                        value: t.name,
+                        checked: isActive,
+                    }),
+                    UI.el('span', { class: 'theme-swatch theme-swatch-' + t.name }),
+                    UI.el('span', { class: 'theme-meta' }, [
+                        UI.el('span', { class: 'theme-label', text: t.label }),
+                        UI.el('span', { class: 'theme-tagline', text: t.tagline }),
+                    ]),
+                ]);
+                themeOptions.appendChild(row);
+            });
         }
+        rebuildThemeRows(currentTheme);
 
         const card = UI.el('div', { class: 'modal' }, [
             UI.el('h2', { text: 'Your profile' }),
+            UI.el('div', { class: 'profile-avatar-row' }, [
+                avatarWrap,
+                UI.el('div', { class: 'profile-avatar-actions' }, [
+                    UI.el('button', {
+                        onclick: function () { avatarUpload.click(); },
+                        text: me.has_avatar ? 'Change avatar' : 'Upload avatar',
+                    }),
+                    me.has_avatar
+                        ? UI.el('button', { class: 'danger', onclick: removeAvatar, text: 'Remove avatar' })
+                        : null,
+                    avatarUpload,
+                ]),
+            ]),
             UI.el('label', {}, [UI.el('span', { text: 'Display name' }), displayInput]),
-            UI.el('label', {}, [UI.el('span', { text: 'Avatar' }), avatarUpload]),
+            UI.el('fieldset', { class: 'theme-picker' }, [
+                UI.el('legend', { text: 'Theme' }),
+                themeOptions,
+            ]),
             UI.el('div', { class: 'modal-actions' }, [
-                UI.el('button', { class: 'danger', onclick: removeAvatar, text: 'Remove avatar' }),
                 UI.el('div', { class: 'composer-spacer' }),
-                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Close' }),
                 UI.el('button', { class: 'primary', onclick: save, text: 'Save' }),
             ]),
         ]);
@@ -770,6 +879,265 @@
             onclick: function (ev) { if (ev.target === backdrop) backdrop.remove(); },
         }, [card]);
         document.body.appendChild(backdrop);
+    }
+
+    // ---- search modal ----------------------------------------------
+
+    function openSearchModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+
+        const input = UI.el('input', {
+            class: 'search-input',
+            type: 'search',
+            placeholder: 'Type at least one word…',
+            autocomplete: 'off',
+            spellcheck: 'false',
+        });
+        const resultsList = UI.el('ul', { class: 'search-results' });
+        const status = UI.el('p', { class: 'placeholder' });
+
+        let timer = null;
+        input.addEventListener('input', function () {
+            const q = input.value.trim();
+            window.clearTimeout(timer);
+            resultsList.innerHTML = '';
+            if (!q) { status.textContent = ''; return; }
+            status.textContent = 'Searching…';
+            timer = window.setTimeout(async function () {
+                try {
+                    const rows = await API.searchMessages(q);
+                    renderResults(rows, q);
+                } catch (e) {
+                    status.textContent = 'Search failed: ' + e.message;
+                }
+            }, 250);
+        });
+
+        function renderResults(rows, q) {
+            resultsList.innerHTML = '';
+            if (rows.length === 0) {
+                status.textContent = 'No matches.';
+                return;
+            }
+            status.textContent = '';
+            const needle = q.toLowerCase();
+            rows.forEach(function (m) {
+                const bodyHit = m.body && m.body.toLowerCase().indexOf(needle) !== -1;
+                const fileHits = (m.attachments || []).filter(function (a) {
+                    return a.filename.toLowerCase().indexOf(needle) !== -1;
+                });
+                const conv = state.conversations.get(m.conversation_id);
+                const convLabel = conv ? convDisplayName(conv) : ('conv #' + m.conversation_id);
+                const sender = state.users.get(m.sender.id) || m.sender;
+
+                const node = UI.el('li', {}, [
+                    UI.el('button', {
+                        class: 'search-result',
+                        onclick: function () {
+                            openConversation(m.conversation_id);
+                            backdrop.remove();
+                        },
+                    }, [
+                        UI.el('div', { class: 'search-result-meta' }, [
+                            UI.el('span', { class: 'search-result-conv', text: convLabel }),
+                            UI.el('span', { text: UI.displayLabel(sender) }),
+                            UI.el('span', { class: 'search-result-time', text: UI.formatTime(m.created_at) }),
+                        ]),
+                        m.body ? UI.el('div', { class: 'search-result-body', text: m.body }) : null,
+                        (!bodyHit && fileHits.length > 0)
+                            ? UI.el('div', { class: 'search-result-files' }, [
+                                UI.el('span', { text: '📎' }),
+                                UI.el('span', { text: fileHits.map(function (a) { return a.filename; }).join(', ') }),
+                            ])
+                            : null,
+                    ]),
+                ]);
+                resultsList.appendChild(node);
+            });
+        }
+
+        const card = UI.el('div', { class: 'modal search-modal' }, [
+            UI.el('h2', {}, [
+                UI.el('span', { text: 'Search messages' }),
+                UI.el('button', {
+                    class: 'search-modal-close',
+                    onclick: function () { backdrop.remove(); },
+                    text: '×',
+                }),
+            ]),
+            UI.el('div', { class: 'search-modal-body' }, [
+                input,
+                status,
+                resultsList,
+            ]),
+        ]);
+        const backdrop = UI.el('div', {
+            class: 'modal-backdrop',
+            onclick: function (ev) { if (ev.target === backdrop) backdrop.remove(); },
+        }, [card]);
+        document.body.appendChild(backdrop);
+
+        // Esc closes; focus the input.
+        function escClose(ev) {
+            if (ev.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escClose); }
+        }
+        document.addEventListener('keydown', escClose);
+        input.focus();
+    }
+
+    // Ctrl/Cmd+K opens search globally.
+    document.addEventListener('keydown', function (ev) {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'k') {
+            ev.preventDefault();
+            openSearchModal();
+        }
+    });
+
+    // ---- media + links panel ---------------------------------------
+
+    function openMediaPanel(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+
+        let tab = 'media';
+        const tabs = UI.el('div', { class: 'ml-tabs' });
+        const body = UI.el('div', { class: 'ml-body' });
+
+        function paintTabs() {
+            tabs.innerHTML = '';
+            tabs.appendChild(UI.el('button', {
+                class: 'ml-tab' + (tab === 'media' ? ' ml-tab-active' : ''),
+                onclick: function () { tab = 'media'; paintTabs(); loadActive(); },
+                text: 'Media',
+            }));
+            tabs.appendChild(UI.el('button', {
+                class: 'ml-tab' + (tab === 'links' ? ' ml-tab-active' : ''),
+                onclick: function () { tab = 'links'; paintTabs(); loadActive(); },
+                text: 'Links',
+            }));
+        }
+
+        async function loadActive() {
+            body.innerHTML = '';
+            body.appendChild(UI.el('p', { class: 'placeholder', text: 'Loading…' }));
+            try {
+                if (tab === 'media') {
+                    const items = await API.listConversationMedia(convID);
+                    renderMedia(items);
+                } else {
+                    const items = await API.listConversationLinks(convID);
+                    renderLinks(items);
+                }
+            } catch (e) {
+                body.innerHTML = '';
+                body.appendChild(UI.el('p', { class: 'placeholder', text: 'Failed to load: ' + e.message }));
+            }
+        }
+
+        function isImage(mime) { return typeof mime === 'string' && mime.indexOf('image/') === 0; }
+        function hostnameOf(url) {
+            try { return new URL(url).hostname.replace(/^www\./, ''); }
+            catch (_) { return url; }
+        }
+
+        function renderMedia(items) {
+            body.innerHTML = '';
+            if (items.length === 0) {
+                body.appendChild(UI.el('p', { class: 'placeholder', text: 'No media shared in this conversation yet.' }));
+                return;
+            }
+            const images = items.filter(function (i) { return isImage(i.attachment.mime_type); });
+            const files = items.filter(function (i) { return !isImage(i.attachment.mime_type); });
+            if (images.length > 0) {
+                body.appendChild(UI.el('h3', { class: 'ml-section-title', text: 'Photos & videos' }));
+                const grid = UI.el('div', { class: 'ml-image-grid' });
+                images.forEach(function (it) {
+                    const url = API.fileURL(it.attachment.id);
+                    const tile = UI.el('a', {
+                        class: 'ml-image-tile',
+                        href: url,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        title: it.attachment.filename + ' — ' + UI.displayLabel(state.users.get(it.sender.id) || it.sender) + ' • ' + UI.formatTime(it.created_at),
+                    }, [
+                        UI.el('img', { src: url, alt: it.attachment.filename, loading: 'lazy' }),
+                    ]);
+                    grid.appendChild(tile);
+                });
+                body.appendChild(grid);
+            }
+            if (files.length > 0) {
+                body.appendChild(UI.el('h3', { class: 'ml-section-title', text: 'Files' }));
+                const list = UI.el('ul', { class: 'ml-file-list' });
+                files.forEach(function (it) {
+                    list.appendChild(UI.el('li', {}, [
+                        UI.el('a', {
+                            class: 'ml-file-row',
+                            href: API.fileURL(it.attachment.id),
+                            target: '_blank',
+                            rel: 'noopener noreferrer',
+                        }, [
+                            UI.el('span', { class: 'ml-file-icon', text: '📎' }),
+                            UI.el('span', { class: 'ml-file-meta' }, [
+                                UI.el('span', { class: 'ml-file-name', text: it.attachment.filename }),
+                                UI.el('span', { class: 'ml-file-sub', text: UI.displayLabel(state.users.get(it.sender.id) || it.sender) + ' • ' + UI.formatTime(it.created_at) }),
+                            ]),
+                        ]),
+                    ]));
+                });
+                body.appendChild(list);
+            }
+        }
+
+        function renderLinks(items) {
+            body.innerHTML = '';
+            if (items.length === 0) {
+                body.appendChild(UI.el('p', { class: 'placeholder', text: 'No links shared in this conversation yet.' }));
+                return;
+            }
+            const list = UI.el('ul', { class: 'ml-link-list' });
+            items.forEach(function (l, i) {
+                list.appendChild(UI.el('li', {}, [
+                    UI.el('a', {
+                        class: 'ml-link-row',
+                        href: l.url,
+                        target: '_blank',
+                        rel: 'noopener noreferrer',
+                        title: l.url,
+                    }, [
+                        UI.el('span', { class: 'ml-link-host', text: hostnameOf(l.url) }),
+                        UI.el('span', { class: 'ml-link-url', text: l.url }),
+                        UI.el('span', { class: 'ml-link-sub', text: UI.displayLabel(state.users.get(l.sender.id) || l.sender) + ' • ' + UI.formatTime(l.created_at) }),
+                    ]),
+                ]));
+            });
+            body.appendChild(list);
+        }
+
+        paintTabs();
+        loadActive();
+
+        const card = UI.el('div', { class: 'modal ml-modal' }, [
+            UI.el('h2', {}, [
+                UI.el('span', { text: 'Media & Links' }),
+                UI.el('button', {
+                    class: 'ml-modal-close',
+                    onclick: function () { backdrop.remove(); },
+                    text: '×',
+                }),
+            ]),
+            tabs,
+            body,
+        ]);
+        const backdrop = UI.el('div', {
+            class: 'modal-backdrop',
+            onclick: function (ev) { if (ev.target === backdrop) backdrop.remove(); },
+        }, [card]);
+        document.body.appendChild(backdrop);
+
+        function escClose(ev) {
+            if (ev.key === 'Escape') { backdrop.remove(); document.removeEventListener('keydown', escClose); }
+        }
+        document.addEventListener('keydown', escClose);
     }
 
     // ---- reads / unread --------------------------------------------
