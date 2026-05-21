@@ -676,6 +676,10 @@ button:disabled {
 .chat-thread {
   flex: 1;
   overflow-y: auto;
+  /* Defensive: clip any descendant that bleeds past the right edge
+   * (e.g. the reaction emoji picker before its right-anchor override
+   * kicks in) so the chat window doesn't grow a horizontal scrollbar. */
+  overflow-x: hidden;
   padding: 0.6rem 0.8rem;
   display: flex;
   flex-direction: column;
@@ -937,6 +941,24 @@ button:disabled {
   bottom: 100%;
   margin-top: 0;
   margin-bottom: 4px;
+}
+/* The .emoji-picker component's own positioning is `left: 0` because
+ * the composer picker opens leftward from its anchor. Inside the
+ * inline reaction toolbar (which lives on the RIGHT edge of every
+ * message bubble), we want the picker to extend LEFT instead — so
+ * override to right: 0 here. Without this the 280-px picker opens
+ * off the right edge of the chat window. */
+.msg-toolbar-picker .emoji-picker {
+  left: auto;
+  right: 0;
+}
+/* Same idea for the vertical axis when flip-up is active: the picker
+ * sits ABOVE the toolbar instead of below, so cancel its own
+ * `bottom: calc(100% + 6px)` and pin it from the top of the wrapper
+ * (the wrapper's `bottom: 100%` already places it above). */
+.msg-toolbar-picker.flip-up .emoji-picker {
+  bottom: auto;
+  top: 0;
 }
 
 /* --- Edited / deleted markers + reply quote --- */
