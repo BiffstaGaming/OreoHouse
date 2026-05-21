@@ -5,15 +5,16 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
 } from "react";
+
+import { emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getAllWindows } from "@tauri-apps/api/window";
 
 import {
   createDM,
   createGroup,
   createRoom,
-  fileURL,
   httpToWs,
   joinRoom,
   leaveConversation,
@@ -22,8 +23,19 @@ import {
   listRooms,
   login,
   logout,
-  uploadFile,
 } from "./lib/api";
+import {
+  EVT,
+  type ChatToMainEnvelope,
+  type ConvUpdatedPayload,
+  type HydratePayload,
+  type MembersChangedPayload,
+  type MessagePayload,
+  type NudgePayload,
+  type SendPayload,
+  type SessionSnapshot,
+  type TypingPayload,
+} from "./lib/chatBridge";
 import {
   isMuted as isMutedPersisted,
   playMessageBlip,
@@ -36,7 +48,6 @@ import {
 } from "./lib/tauri";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import type {
-  AttachmentView,
   ConversationView,
   MessageView,
   OutgoingMessage,
@@ -49,34 +60,44 @@ import type {
 
 import "./App.css";
 
-type Session = {
-  serverUrl: string;
-  token: string;
-  user: UserInfo;
-};
-
-type ChatWindowState = {
-  position: { x: number; y: number };
-  minimized: boolean;
-  zIndex: number;
-};
-
-type PendingAttachment =
-  | { kind: "uploading"; localID: string; filename: string }
-  | { kind: "ready"; localID: string; view: AttachmentView }
-  | { kind: "error"; localID: string; filename: string; error: string };
+type Session = SessionSnapshot;
 
 type ModalKind = "newGroup" | "newRoom" | "browseRooms";
 
 const DEFAULT_SERVER_URL = "http://localhost:8080";
 const HISTORY_PAGE_SIZE = 50;
-const WINDOW_SPAWN_BASE = { x: 90, y: 70 };
-const WINDOW_DEFAULT_SIZE = { w: 380, h: 460 };
-const WINDOW_MIN_VISIBLE = 80; // keep at least this many px on-screen when dragging
-const TYPING_SEND_THROTTLE_MS = 2000; // outgoing typing events
-const TYPING_EXPIRY_MS = 5000; // how long an incoming typing indicator sticks
-const NUDGE_COOLDOWN_MS = 3000; // sender-side button cooldown
-const SHAKE_DURATION_MS = 700; // matches the CSS @keyframes shake length
+const CHAT_WINDOW_DEFAULT = { w: 420, h: 520 };
+const CHAT_WINDOW_MIN = { w: 320, h: 280 };
+const TYPING_EXPIRY_MS = 5000;
+
+// Per-conversation window geometry persisted in localStorage so a chat
+// pops back up at the size + position you last left it.
+type Geometry = { x: number; y: number; w: number; h: number };
+
+function geomKey(convID: number): string {
+  return `oreohouse-chat-geom-${convID}`;
+}
+
+function loadGeometry(convID: number): Geometry | null {
+  try {
+    const raw = localStorage.getItem(geomKey(convID));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Geometry>;
+    if (
+      typeof parsed.x === "number" &&
+      typeof parsed.y === "number" &&
+      typeof parsed.w === "number" &&
+      typeof parsed.h === "number" &&
+      parsed.w >= CHAT_WINDOW_MIN.w &&
+      parsed.h >= CHAT_WINDOW_MIN.h
+    ) {
+      return parsed as Geometry;
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -158,6 +179,16 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
 // ---------------------------------------------------------------------
 // Chat screen — top-level container
 // ---------------------------------------------------------------------
+//
+// Owns:
+//   - the WebSocket connection
+//   - the conversations + messages caches
+//   - the unread-per-conv badges
+//   - the list of currently-open chat sub-windows (Tauri labels)
+//
+// Each chat window is a real OS window spawned via Tauri. The chat
+// window's React root is in ChatWindowApp.tsx; main ↔ chat traffic
+// uses the events defined in lib/chatBridge.ts.
 
 function ChatScreen({
   session,
@@ -176,39 +207,51 @@ function ChatScreen({
   const [messages, setMessages] = useState<Map<number, MessageView[]>>(
     new Map(),
   );
-  const [openWindows, setOpenWindows] = useState<Map<number, ChatWindowState>>(
-    new Map(),
-  );
-  const [topZ, setTopZ] = useState(10);
   const [unreadByConv, setUnreadByConv] = useState<Map<number, number>>(
     new Map(),
   );
   // Per-conversation typing indicators. Inner map: user_id →
-  // {username, expiresAt}. Entries expire after TYPING_EXPIRY_MS via
-  // the interval below.
+  // {username, expiresAt}.
   const [typing, setTyping] = useState<
     Map<number, Map<number, { username: string; expiresAt: number }>>
   >(new Map());
-  // Set of conversation IDs whose chat window should be shaking right
-  // now. Entries auto-clear after SHAKE_DURATION_MS.
-  const [shaking, setShaking] = useState<Set<number>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMutedPersisted());
+  const [modal, setModal] = useState<ModalKind | null>(null);
+  const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
+  const wsRef = useRef<WSClient | null>(null);
+
+  // Open chat sub-windows by conv id. The value is the Tauri label.
+  // Kept in a ref because the listen()-callbacks need it without
+  // re-subscribing on every change.
+  const openChatsRef = useRef<Set<number>>(new Set());
+  // Which chat sub-window (if any) currently has the OS focus. Used by
+  // appendMessage to decide whether to bump the unread badge.
+  const focusedConvRef = useRef<number | null>(null);
+
+  // Refs mirroring state for use inside listen() callbacks.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const typingRef = useRef(typing);
+  typingRef.current = typing;
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
 
   function toggleMuted() {
     setMutedState((prev) => {
       const next = !prev;
       setMutedPersisted(next);
+      // Broadcast to chat windows so their per-window mute toggle stays
+      // in sync without each one re-reading localStorage.
+      for (const id of openChatsRef.current) {
+        void emitTo(`chat-${id}`, EVT.MutedChanged, { muted: next });
+      }
       return next;
     });
   }
-  const [modal, setModal] = useState<ModalKind | null>(null);
-  const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
-  const wsRef = useRef<WSClient | null>(null);
-
-  // Refs mirroring the latest state so handleServerMessage (set once in
-  // the connect call) can see the current open-windows map.
-  const openWindowsRef = useRef(openWindows);
-  openWindowsRef.current = openWindows;
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -218,6 +261,8 @@ function ChatScreen({
       console.error("listConversations failed:", err);
     }
   }, [session]);
+
+  // ---- WebSocket connect ------------------------------------------
 
   useEffect(() => {
     void refreshConversations();
@@ -245,11 +290,94 @@ function ChatScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  // ---- chat-window IPC: chat → main -------------------------------
+
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+
+    async function setup() {
+      unlisteners.push(
+        await listen<ChatToMainEnvelope<{}>>(EVT.Ready, async (e) => {
+          const cid = e.payload.conversation_id;
+          await ensureHistory(cid);
+          const conv = conversationsRef.current.get(cid);
+          if (!conv) return;
+          const hydrate: HydratePayload = {
+            session: sessionRef.current,
+            conv,
+            messages: messagesRef.current.get(cid) ?? [],
+            typers: Array.from(
+              (typingRef.current.get(cid) ?? new Map()).values(),
+            ),
+            muted: mutedRef.current,
+          };
+          await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
+        }),
+        await listen<ChatToMainEnvelope<SendPayload>>(EVT.Send, (e) => {
+          if (!wsRef.current) return;
+          wsRef.current.send({
+            type: "message",
+            conversation_id: e.payload.conversation_id,
+            body: e.payload.body,
+            attachment_ids: e.payload.attachment_ids,
+          });
+        }),
+        await listen<ChatToMainEnvelope<{}>>(EVT.OutgoingTyping, (e) => {
+          if (!wsRef.current) return;
+          wsRef.current.send({
+            type: "typing",
+            conversation_id: e.payload.conversation_id,
+          });
+        }),
+        await listen<ChatToMainEnvelope<{}>>(EVT.OutgoingNudge, (e) => {
+          if (!wsRef.current) return;
+          wsRef.current.send({
+            type: "nudge",
+            conversation_id: e.payload.conversation_id,
+          });
+        }),
+        await listen<ChatToMainEnvelope<{ focused: boolean }>>(
+          EVT.Focused,
+          (e) => {
+            const cid = e.payload.conversation_id;
+            if (e.payload.focused) {
+              focusedConvRef.current = cid;
+              // Clear unread the moment the conv comes into focus.
+              setUnreadByConv((prev) => {
+                if (!prev.has(cid)) return prev;
+                const out = new Map(prev);
+                out.delete(cid);
+                return out;
+              });
+            } else if (focusedConvRef.current === cid) {
+              focusedConvRef.current = null;
+            }
+          },
+        ),
+        await listen<ChatToMainEnvelope<{}>>(EVT.Leave, (e) => {
+          const conv = conversationsRef.current.get(e.payload.conversation_id);
+          if (conv) void handleLeave(conv);
+        }),
+      );
+      if (cancelled) {
+        for (const u of unlisteners) u();
+      }
+    }
+    void setup();
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) u();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- WS server message handler -----------------------------------
+
   function handleServerMessage(msg: ServerMessage) {
     switch (msg.type) {
       case "welcome":
         setOnline(sortPresence(msg.online));
-        // Initialise our own status panel from the snapshot.
         {
           const me = msg.online.find((p) => p.user.id === session.user.id);
           if (me) {
@@ -271,7 +399,6 @@ function ChatScreen({
           });
           return sortPresence(next);
         });
-        // If it's about me (e.g. from another tab), mirror it locally.
         if (msg.user.id === session.user.id && msg.state !== "offline") {
           setMyState(msg.state);
           setMyCustomText(msg.custom_text ?? "");
@@ -286,10 +413,14 @@ function ChatScreen({
           out.set(msg.conversation.id, msg.conversation);
           return out;
         });
+        // If a chat window happens to be open for this conv (shouldn't
+        // be, but be defensive), let it refresh.
+        if (openChatsRef.current.has(msg.conversation.id)) {
+          const payload: ConvUpdatedPayload = { conv: msg.conversation };
+          void emitTo(`chat-${msg.conversation.id}`, EVT.ConvUpdated, payload);
+        }
         return;
       case "typing":
-        // Don't show our own echoes (server already filters but be
-        // defensive against future protocol changes).
         if (msg.user.id === session.user.id) return;
         setTyping((prev) => {
           const out = new Map(prev);
@@ -301,9 +432,20 @@ function ChatScreen({
           out.set(msg.conversation_id, inner);
           return out;
         });
+        if (openChatsRef.current.has(msg.conversation_id)) {
+          const payload: TypingPayload = {
+            user: msg.user,
+            expiresAt: Date.now() + TYPING_EXPIRY_MS,
+          };
+          void emitTo(
+            `chat-${msg.conversation_id}`,
+            EVT.IncomingTyping,
+            payload,
+          );
+        }
         return;
       case "nudge":
-        triggerNudgeReceived(msg.conversation_id);
+        triggerNudgeReceived(msg.conversation_id, msg.sender);
         return;
       case "conversation_members_changed":
         setConversations((prev) => {
@@ -313,6 +455,14 @@ function ChatScreen({
           out.set(msg.conversation_id, { ...existing, members: msg.members });
           return out;
         });
+        if (openChatsRef.current.has(msg.conversation_id)) {
+          const payload: MembersChangedPayload = { members: msg.members };
+          void emitTo(
+            `chat-${msg.conversation_id}`,
+            EVT.MembersChanged,
+            payload,
+          );
+        }
         return;
       case "error":
         console.error("ws error", msg.code, msg.message);
@@ -345,27 +495,34 @@ function ChatScreen({
       return prev;
     });
 
-    // Unread + OS attention: only if the message isn't mine AND the
-    // user isn't actively looking at the conv (its window open,
-    // un-minimized, and on top).
+    // Forward to the chat window if it's open (the chat window plays
+    // its own blip + flash, focus-aware).
+    if (openChatsRef.current.has(m.conversation_id)) {
+      const payload: MessagePayload = { message: view };
+      void emitTo(`chat-${m.conversation_id}`, EVT.IncomingMessage, payload);
+    }
+
+    // Self-sent messages never bump unread or play sound.
     if (m.sender.id === session.user.id) return;
-    const w = openWindowsRef.current.get(m.conversation_id);
-    const focusedConv = w && !w.minimized && w.zIndex === topZ;
-    if (focusedConv) return;
+
+    const isFocused = focusedConvRef.current === m.conversation_id;
+    if (isFocused) return;
+
     setUnreadByConv((prev) => {
       const out = new Map(prev);
       out.set(m.conversation_id, (out.get(m.conversation_id) ?? 0) + 1);
       return out;
     });
-    // Flash the taskbar / dock when the main window is unfocused so
-    // the user notices even with the app in the background.
-    void flashWindowIfUnfocused();
-    // The blip itself short-circuits if muted; no need to gate here.
-    playMessageBlip();
+    // Flash + sound only if the chat sub-window isn't already open
+    // for this conv — otherwise its own flash/blip handles it.
+    if (!openChatsRef.current.has(m.conversation_id)) {
+      void flashWindowIfUnfocused();
+      playMessageBlip();
+    }
   }
 
   async function ensureHistory(convID: number) {
-    if (messages.has(convID) || historyLoading.has(convID)) return;
+    if (messagesRef.current.has(convID) || historyLoading.has(convID)) return;
     setHistoryLoading((prev) => new Set(prev).add(convID));
     try {
       const rows = await listMessages(
@@ -393,79 +550,91 @@ function ChatScreen({
     }
   }
 
-  function openConvWindow(convID: number) {
-    setOpenWindows((prev) => {
-      const existing = prev.get(convID);
-      const newZ = topZ + 1;
+  // ---- chat window spawn / focus / track --------------------------
+
+  async function openChatWindow(convID: number) {
+    // Always clear the unread badge optimistically — the conv is about
+    // to be visible. If the spawn fails the badge will re-accumulate.
+    setUnreadByConv((prev) => {
+      if (!prev.has(convID)) return prev;
       const out = new Map(prev);
-      if (existing) {
-        out.set(convID, { ...existing, minimized: false, zIndex: newZ });
-      } else {
-        const offset = (prev.size % 6) * 28;
-        out.set(convID, {
-          position: {
-            x: WINDOW_SPAWN_BASE.x + offset,
-            y: WINDOW_SPAWN_BASE.y + offset,
-          },
-          minimized: false,
-          zIndex: newZ,
-        });
+      out.delete(convID);
+      return out;
+    });
+
+    const label = `chat-${convID}`;
+
+    // If already open, just focus.
+    if (openChatsRef.current.has(convID)) {
+      try {
+        const all = await getAllWindows();
+        const existing = all.find((w) => w.label === label);
+        if (existing) {
+          await existing.unminimize();
+          await existing.setFocus();
+          return;
+        }
+      } catch (err) {
+        console.error("focus existing chat failed", err);
       }
-      return out;
-    });
-    setTopZ((z) => z + 1);
-    setUnreadByConv((prev) => {
-      if (!prev.has(convID)) return prev;
-      const out = new Map(prev);
-      out.delete(convID);
-      return out;
-    });
-    void ensureHistory(convID);
-  }
+    }
 
-  function closeConvWindow(convID: number) {
-    setOpenWindows((prev) => {
-      const out = new Map(prev);
-      out.delete(convID);
-      return out;
-    });
-  }
+    const conv = conversationsRef.current.get(convID);
+    const title = conv ? conversationTitle(conv, session.user.id) : "Chat";
+    const geom = loadGeometry(convID);
 
-  function minimizeConvWindow(convID: number) {
-    setOpenWindows((prev) => {
-      const w = prev.get(convID);
-      if (!w) return prev;
-      const out = new Map(prev);
-      out.set(convID, { ...w, minimized: true });
-      return out;
+    const win = new WebviewWindow(label, {
+      // Per Tauri 2 docs the route is appended to the app URL — works
+      // for both `npm run dev` (http://localhost:1420/...) and the
+      // packaged tauri://localhost. The hash routes to ChatWindowApp.
+      url: `/#/chat/${convID}`,
+      title,
+      width: geom?.w ?? CHAT_WINDOW_DEFAULT.w,
+      height: geom?.h ?? CHAT_WINDOW_DEFAULT.h,
+      x: geom?.x,
+      y: geom?.y,
+      minWidth: CHAT_WINDOW_MIN.w,
+      minHeight: CHAT_WINDOW_MIN.h,
+      resizable: true,
+      visible: true,
+      focus: true,
     });
-  }
 
-  function setConvWindowPos(convID: number, pos: { x: number; y: number }) {
-    setOpenWindows((prev) => {
-      const w = prev.get(convID);
-      if (!w) return prev;
-      const out = new Map(prev);
-      out.set(convID, { ...w, position: pos });
-      return out;
-    });
-  }
+    openChatsRef.current.add(convID);
 
-  function bringToFront(convID: number) {
-    setOpenWindows((prev) => {
-      const w = prev.get(convID);
-      if (!w) return prev;
-      if (w.zIndex === topZ) return prev;
-      const out = new Map(prev);
-      out.set(convID, { ...w, zIndex: topZ + 1 });
-      return out;
-    });
-    setTopZ((z) => z + 1);
-    setUnreadByConv((prev) => {
-      if (!prev.has(convID)) return prev;
-      const out = new Map(prev);
-      out.delete(convID);
-      return out;
+    // Persist geometry on resize / move (debounced inside the
+    // listeners). Drop tracking when the window is destroyed.
+    let saveTimer: number | undefined;
+    const queueSave = async () => {
+      if (saveTimer) window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(async () => {
+        try {
+          const pos = await win.outerPosition();
+          const size = await win.outerSize();
+          const scale = await win.scaleFactor();
+          const next: Geometry = {
+            x: Math.round(pos.x / scale),
+            y: Math.round(pos.y / scale),
+            w: Math.round(size.width / scale),
+            h: Math.round(size.height / scale),
+          };
+          localStorage.setItem(geomKey(convID), JSON.stringify(next));
+        } catch {
+          /* window may have closed mid-save; ignore */
+        }
+      }, 200);
+    };
+
+    const offResized = await win.onResized(() => void queueSave());
+    const offMoved = await win.onMoved(() => void queueSave());
+    const offClosed = await win.onCloseRequested(() => {
+      offResized();
+      offMoved();
+      offClosed();
+      openChatsRef.current.delete(convID);
+      if (focusedConvRef.current === convID) {
+        focusedConvRef.current = null;
+      }
     });
   }
 
@@ -473,75 +642,46 @@ function ChatScreen({
     if (user.id === session.user.id) return;
     for (const c of conversations.values()) {
       if (c.type === "dm" && c.members.some((m) => m.id === user.id)) {
-        openConvWindow(c.id);
+        void openChatWindow(c.id);
         return;
       }
     }
     try {
       const conv = await createDM(session.serverUrl, session.token, user.id);
       setConversations((prev) => new Map(prev).set(conv.id, conv));
-      openConvWindow(conv.id);
+      void openChatWindow(conv.id);
     } catch (err) {
       console.error("createDM failed:", err);
     }
   }
 
-  function sendMessage(
-    convID: number,
-    body: string,
-    attachmentIDs?: number[],
-  ) {
-    if (!wsRef.current) return;
-    wsRef.current.send({
-      type: "message",
-      conversation_id: convID,
-      body,
-      attachment_ids: attachmentIDs,
-    });
-  }
+  // ---- nudge received ---------------------------------------------
 
-  function sendTyping(convID: number) {
-    if (!wsRef.current) return;
-    wsRef.current.send({
-      type: "typing",
-      conversation_id: convID,
-    });
-  }
-
-  function sendNudge(convID: number) {
-    if (!wsRef.current) return;
-    wsRef.current.send({
-      type: "nudge",
-      conversation_id: convID,
-    });
-  }
-
-  // triggerNudgeReceived shakes the conversation's chat window for
-  // SHAKE_DURATION_MS, opening or restoring the window first if it
-  // isn't already visible. Also plays the nudge sound (mute-aware).
-  function triggerNudgeReceived(convID: number) {
-    // Open the window if it's closed or minimized so the user can
-    // actually see the shake.
-    const w = openWindowsRef.current.get(convID);
-    if (!w || w.minimized) {
-      openConvWindow(convID);
-    }
-    setShaking((prev) => {
-      const out = new Set(prev);
-      out.add(convID);
-      return out;
-    });
-    setTimeout(() => {
-      setShaking((prev) => {
-        if (!prev.has(convID)) return prev;
-        const out = new Set(prev);
-        out.delete(convID);
-        return out;
+  function triggerNudgeReceived(convID: number, sender: UserInfo) {
+    // Ensure the window is open so the user can see the shake.
+    const wasOpen = openChatsRef.current.has(convID);
+    if (!wasOpen) {
+      void openChatWindow(convID).then(() => {
+        // Tiny delay so the window's listeners are wired before we
+        // fire the nudge event into it.
+        window.setTimeout(() => {
+          const payload: NudgePayload = { sender };
+          void emitTo(`chat-${convID}`, EVT.IncomingNudge, payload);
+        }, 300);
       });
-    }, SHAKE_DURATION_MS);
-    playNudge();
-    void flashWindowIfUnfocused();
+    } else {
+      const payload: NudgePayload = { sender };
+      void emitTo(`chat-${convID}`, EVT.IncomingNudge, payload);
+    }
+    // Also flash the main window + play in main if the chat window
+    // can't render it yet.
+    if (!wasOpen) {
+      playNudge();
+      void flashWindowIfUnfocused();
+    }
   }
+
+  // ---- status + sign-out + leave ----------------------------------
 
   function updateStatus(state: UserState, customText: string) {
     if (state === "offline") return; // server rejects this
@@ -569,23 +709,47 @@ function ChatScreen({
         out.delete(conv.id);
         return out;
       });
-      closeConvWindow(conv.id);
+      await closeChatWindow(conv.id);
     } catch (err) {
       console.error("leave failed:", err);
     }
   }
 
+  async function closeChatWindow(convID: number) {
+    if (!openChatsRef.current.has(convID)) return;
+    try {
+      const all = await getAllWindows();
+      const w = all.find((x) => x.label === `chat-${convID}`);
+      if (w) await w.close();
+    } catch (err) {
+      console.error("close chat window failed", err);
+    }
+  }
+
+  async function closeAllChatWindows() {
+    const ids = Array.from(openChatsRef.current);
+    for (const id of ids) {
+      await closeChatWindow(id);
+    }
+  }
+
   async function handleSignOut() {
+    await closeAllChatWindows();
     wsRef.current?.close();
-    await logout(session.serverUrl, session.token);
+    try {
+      await logout(session.serverUrl, session.token);
+    } catch {
+      /* best-effort */
+    }
     onSignOut();
   }
 
-  // Expire stale typing indicators once a second. Done as a single
-  // global tick rather than per-conversation timers so we don't fan
-  // out timers on every keystroke.
+  // ---- maintenance ------------------------------------------------
+
+  // Expire stale typing indicators in main (we keep them around for
+  // potential re-hydrate). Chat windows expire their own copies too.
   useEffect(() => {
-    const t = setInterval(() => {
+    const t = window.setInterval(() => {
       const now = Date.now();
       setTyping((prev) => {
         let dirty = false;
@@ -607,11 +771,11 @@ function ChatScreen({
         return dirty ? out : prev;
       });
     }, 1000);
-    return () => clearInterval(t);
+    return () => window.clearInterval(t);
   }, []);
 
   // Total unread across every conversation — prefixed onto the OS
-  // window title MSN-style so the count shows in the taskbar.
+  // main-window title MSN-style.
   const totalUnread = useMemo(
     () =>
       Array.from(unreadByConv.values()).reduce((sum, n) => sum + n, 0),
@@ -622,21 +786,6 @@ function ChatScreen({
       totalUnread > 0 ? `(${totalUnread}) OreoHouse` : "OreoHouse",
     );
   }, [totalUnread]);
-
-  const openWindowEntries = useMemo(
-    () =>
-      Array.from(openWindows.entries()).filter(
-        ([id, w]) => !w.minimized && conversations.has(id),
-      ),
-    [openWindows, conversations],
-  );
-  const minimizedEntries = useMemo(
-    () =>
-      Array.from(openWindows.entries()).filter(
-        ([id, w]) => w.minimized && conversations.has(id),
-      ),
-    [openWindows, conversations],
-  );
 
   return (
     <main className="phase6 chat-screen">
@@ -671,57 +820,11 @@ function ChatScreen({
         conversations={conversations}
         unreadByConv={unreadByConv}
         onPickUser={openChatWithUser}
-        onPickConv={openConvWindow}
+        onPickConv={(id) => void openChatWindow(id)}
         onNewGroup={() => setModal("newGroup")}
         onNewRoom={() => setModal("newRoom")}
         onBrowseRooms={() => setModal("browseRooms")}
       />
-
-      <div className="windows-layer">
-        {openWindowEntries.map(([convID, state]) => {
-          const conv = conversations.get(convID)!;
-          const typers = Array.from(
-            (typing.get(convID) ?? new Map()).values(),
-          ) as { username: string; expiresAt: number }[];
-          return (
-            <ChatWindow
-              key={convID}
-              session={session}
-              conv={conv}
-              state={state}
-              messages={messages.get(convID) ?? []}
-              typers={typers}
-              shaking={shaking.has(convID)}
-              onMove={(p) => setConvWindowPos(convID, p)}
-              onClose={() => closeConvWindow(convID)}
-              onMinimize={() => minimizeConvWindow(convID)}
-              onFocus={() => bringToFront(convID)}
-              onSend={(body, atts) => sendMessage(convID, body, atts)}
-              onTyping={() => sendTyping(convID)}
-              onNudge={() => sendNudge(convID)}
-              onLeave={() => handleLeave(conv)}
-            />
-          );
-        })}
-      </div>
-
-      {minimizedEntries.length > 0 && (
-        <div className="minimized-bar">
-          {minimizedEntries.map(([convID]) => {
-            const conv = conversations.get(convID)!;
-            return (
-              <MinimizedChip
-                key={convID}
-                conv={conv}
-                self={session.user}
-                unread={unreadByConv.get(convID) ?? 0}
-                onRestore={() => openConvWindow(convID)}
-                onClose={() => closeConvWindow(convID)}
-              />
-            );
-          })}
-        </div>
-      )}
 
       {modal === "newGroup" && (
         <Modal title="New group" onClose={() => setModal(null)}>
@@ -732,7 +835,7 @@ function ChatScreen({
             onCreated={(c) => {
               setConversations((prev) => new Map(prev).set(c.id, c));
               setModal(null);
-              openConvWindow(c.id);
+              void openChatWindow(c.id);
             }}
             onCancel={() => setModal(null)}
           />
@@ -745,7 +848,7 @@ function ChatScreen({
             onCreated={(c) => {
               setConversations((prev) => new Map(prev).set(c.id, c));
               setModal(null);
-              openConvWindow(c.id);
+              void openChatWindow(c.id);
             }}
             onCancel={() => setModal(null)}
           />
@@ -758,7 +861,7 @@ function ChatScreen({
             onJoined={(c) => {
               setConversations((prev) => new Map(prev).set(c.id, c));
               setModal(null);
-              openConvWindow(c.id);
+              void openChatWindow(c.id);
             }}
             onCancel={() => setModal(null)}
           />
@@ -795,9 +898,6 @@ function ContactList({
 }) {
   const onlineIDs = new Set(online.map((p) => p.user.id));
 
-  // Map every DM partner -> their UserInfo (lifted from conversation
-  // membership), and the corresponding conversation id so we can route
-  // unread badges correctly.
   const dmContactMap = new Map<number, UserInfo>();
   const dmConvByUser = new Map<number, ConversationView>();
   for (const c of conversations.values()) {
@@ -931,9 +1031,6 @@ function ContactRow({
   );
 }
 
-// StatusMenu — the topbar dropdown for setting your own state +
-// custom message. Click the chip to open; pick a state or edit the
-// text (Enter / blur to save).
 function StatusMenu({
   state,
   customText,
@@ -1040,438 +1137,6 @@ function ConvRow({
 }
 
 // ---------------------------------------------------------------------
-// Chat window — floating, draggable, minimizable
-// ---------------------------------------------------------------------
-
-function ChatWindow({
-  session,
-  conv,
-  state,
-  messages,
-  typers,
-  shaking,
-  onMove,
-  onClose,
-  onMinimize,
-  onFocus,
-  onSend,
-  onTyping,
-  onNudge,
-  onLeave,
-}: {
-  session: Session;
-  conv: ConversationView;
-  state: ChatWindowState;
-  messages: MessageView[];
-  typers: { username: string; expiresAt: number }[];
-  shaking: boolean;
-  onMove: (pos: { x: number; y: number }) => void;
-  onClose: () => void;
-  onMinimize: () => void;
-  onFocus: () => void;
-  onSend: (body: string, attachmentIDs?: number[]) => void;
-  onTyping: () => void;
-  onNudge: () => void;
-  onLeave: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<PendingAttachment[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [nudgeCooldown, setNudgeCooldown] = useState(false);
-  const dragRef = useRef({ startX: 0, startY: 0, startPosX: 0, startPosY: 0 });
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const lastTypingSentAt = useRef(0);
-
-  function handleNudgeClick() {
-    if (nudgeCooldown) return;
-    onNudge();
-    setNudgeCooldown(true);
-    setTimeout(() => setNudgeCooldown(false), NUDGE_COOLDOWN_MS);
-  }
-
-  // Scroll to bottom whenever new messages arrive in this window.
-  useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages]);
-
-  // Drag — attach document-level listeners only while dragging.
-  useEffect(() => {
-    if (!isDragging) return;
-    function onMouseMove(e: MouseEvent) {
-      const dx = e.clientX - dragRef.current.startX;
-      const dy = e.clientY - dragRef.current.startY;
-      const maxX = window.innerWidth - WINDOW_MIN_VISIBLE;
-      const maxY = window.innerHeight - WINDOW_MIN_VISIBLE;
-      const nextX = clamp(dragRef.current.startPosX + dx, 0, maxX);
-      const nextY = clamp(dragRef.current.startPosY + dy, 0, maxY);
-      onMove({ x: nextX, y: nextY });
-    }
-    function onMouseUp() {
-      setIsDragging(false);
-    }
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
-  }, [isDragging, onMove]);
-
-  function startDrag(e: ReactMouseEvent) {
-    // Only react to left-button drags on the bare header (not on
-    // buttons inside it).
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button")) return;
-    e.preventDefault();
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startPosX: state.position.x,
-      startPosY: state.position.y,
-    };
-    setIsDragging(true);
-    onFocus();
-  }
-
-  const uploading = pending.some((p) => p.kind === "uploading");
-  const readyIDs = pending
-    .filter(
-      (p): p is { kind: "ready"; localID: string; view: AttachmentView } =>
-        p.kind === "ready",
-    )
-    .map((p) => p.view.id);
-
-  async function handleFiles(files: FileList) {
-    for (const file of Array.from(files)) {
-      const localID = cryptoRandomID();
-      setPending((p) => [
-        ...p,
-        { kind: "uploading", localID, filename: file.name },
-      ]);
-      try {
-        const view = await uploadFile(session.serverUrl, session.token, file);
-        setPending((p) =>
-          p.map((x) =>
-            x.localID === localID ? { kind: "ready", localID, view } : x,
-          ),
-        );
-      } catch (err) {
-        setPending((p) =>
-          p.map((x) =>
-            x.localID === localID
-              ? {
-                  kind: "error",
-                  localID,
-                  filename: file.name,
-                  error: (err as Error).message,
-                }
-              : x,
-          ),
-        );
-      }
-    }
-  }
-
-  function removePending(localID: string) {
-    setPending((p) => p.filter((x) => x.localID !== localID));
-  }
-
-  function trySend() {
-    const body = draft.trim();
-    if (!body && readyIDs.length === 0) return;
-    if (uploading) return;
-    onSend(body, readyIDs.length > 0 ? readyIDs : undefined);
-    setDraft("");
-    setPending((p) => p.filter((x) => x.kind === "uploading"));
-  }
-
-  function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      trySend();
-    }
-  }
-
-  const title = conversationTitle(conv, session.user.id);
-  const subtitle = conversationSubtitle(conv, session.user.id);
-
-  return (
-    <section
-      className={`chat-window ${shaking ? "shaking" : ""}`}
-      style={{
-        left: state.position.x,
-        top: state.position.y,
-        width: WINDOW_DEFAULT_SIZE.w,
-        height: WINDOW_DEFAULT_SIZE.h,
-        zIndex: state.zIndex,
-      }}
-      onMouseDown={onFocus}
-    >
-      <header
-        className={`chat-window-header ${isDragging ? "dragging" : ""}`}
-        onMouseDown={startDrag}
-      >
-        <div className="chat-window-titles">
-          <span className="chat-window-title">{title}</span>
-          {subtitle && (
-            <span className="chat-window-subtitle">{subtitle}</span>
-          )}
-        </div>
-        <div className="chat-window-buttons">
-          <button
-            type="button"
-            className="chat-window-button"
-            title={nudgeCooldown ? "Wait a moment…" : "Nudge"}
-            onClick={handleNudgeClick}
-            disabled={nudgeCooldown}
-          >
-            👋
-          </button>
-          {conv.type !== "dm" && (
-            <button
-              type="button"
-              className="chat-window-button danger"
-              title={`Leave ${title}`}
-              onClick={() => {
-                if (confirm(`Leave ${title}?`)) onLeave();
-              }}
-            >
-              Leave
-            </button>
-          )}
-          <button
-            type="button"
-            className="chat-window-button"
-            title="Minimize"
-            onClick={onMinimize}
-          >
-            _
-          </button>
-          <button
-            type="button"
-            className="chat-window-button"
-            title="Close"
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </div>
-      </header>
-      <div className="chat-thread" ref={scrollRef}>
-        {messages.length === 0 ? (
-          <p className="empty">No messages yet — say hi.</p>
-        ) : (
-          messages.map((m) => (
-            <MessageRow key={m.id} m={m} session={session} />
-          ))
-        )}
-      </div>
-      {typers.length > 0 && (
-        <div className="typing-indicator">
-          {formatTypers(typers.map((t) => t.username))} typing…
-        </div>
-      )}
-      {pending.length > 0 && (
-        <div className="composer-pending">
-          {pending.map((p) => (
-            <PendingChip
-              key={p.localID}
-              attachment={p}
-              onRemove={() => removePending(p.localID)}
-            />
-          ))}
-        </div>
-      )}
-      <form
-        className="composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          trySend();
-        }}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          style={{ display: "none" }}
-          onChange={(e) => {
-            if (e.target.files) {
-              void handleFiles(e.target.files);
-              e.target.value = "";
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="composer-attach"
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach a file"
-        >
-          📎
-        </button>
-        <input
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            if (e.target.value !== "") {
-              const now = Date.now();
-              if (now - lastTypingSentAt.current >= TYPING_SEND_THROTTLE_MS) {
-                lastTypingSentAt.current = now;
-                onTyping();
-              }
-            }
-          }}
-          onKeyDown={onKeyDown}
-          placeholder="Type a message — Enter to send"
-          maxLength={4096}
-          autoComplete="off"
-        />
-        <button
-          type="submit"
-          disabled={uploading || (!draft.trim() && readyIDs.length === 0)}
-        >
-          {uploading ? "…" : "Send"}
-        </button>
-      </form>
-    </section>
-  );
-}
-
-function MinimizedChip({
-  conv,
-  self,
-  unread,
-  onRestore,
-  onClose,
-}: {
-  conv: ConversationView;
-  self: UserInfo;
-  unread: number;
-  onRestore: () => void;
-  onClose: () => void;
-}) {
-  const title = conversationTitle(conv, self.id);
-  return (
-    <div className="min-chip">
-      <button
-        type="button"
-        className="min-chip-restore"
-        onClick={onRestore}
-        title={`Restore ${title}`}
-      >
-        <span className="conv-icon">{conversationIcon(conv)}</span>
-        <span className="min-chip-title">{title}</span>
-        {unread > 0 && <span className="unread-badge">{unread}</span>}
-      </button>
-      <button
-        type="button"
-        className="min-chip-close"
-        onClick={onClose}
-        title="Close"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-function MessageRow({
-  m,
-  session,
-}: {
-  m: MessageView;
-  session: Session;
-}) {
-  const mine = m.sender.id === session.user.id;
-  return (
-    <div className={`msg ${mine ? "msg-mine" : ""}`}>
-      <div className="msg-meta">
-        <span className="msg-sender">{mine ? "you" : m.sender.username}</span>
-        <span className="msg-time">{formatTime(m.created_at)}</span>
-      </div>
-      {m.body && <div className="msg-body">{m.body}</div>}
-      {m.attachments && m.attachments.length > 0 && (
-        <div className="msg-attachments">
-          {m.attachments.map((a) => (
-            <AttachmentRender key={a.id} a={a} session={session} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AttachmentRender({
-  a,
-  session,
-}: {
-  a: AttachmentView;
-  session: Session;
-}) {
-  const url = fileURL(session.serverUrl, session.token, a.id);
-  if (a.mime_type.startsWith("image/")) {
-    return (
-      <a
-        className="msg-image-link"
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        title={`${a.filename} (${formatBytes(a.size_bytes)})`}
-      >
-        <img className="msg-image" src={url} alt={a.filename} loading="lazy" />
-      </a>
-    );
-  }
-  return (
-    <a
-      className="msg-file"
-      href={url}
-      download={a.filename}
-      title={a.filename}
-    >
-      <span className="msg-file-icon">📎</span>
-      <span className="msg-file-name">{a.filename}</span>
-      <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
-    </a>
-  );
-}
-
-function PendingChip({
-  attachment,
-  onRemove,
-}: {
-  attachment: PendingAttachment;
-  onRemove: () => void;
-}) {
-  let label: string;
-  let cls: string;
-  switch (attachment.kind) {
-    case "uploading":
-      label = `Uploading ${attachment.filename}…`;
-      cls = "chip-uploading";
-      break;
-    case "ready":
-      label = `${attachment.view.filename} (${formatBytes(attachment.view.size_bytes)})`;
-      cls = "chip-ready";
-      break;
-    case "error":
-      label = `Failed: ${attachment.filename} — ${attachment.error}`;
-      cls = "chip-error";
-      break;
-  }
-  return (
-    <span className={`chip ${cls}`}>
-      <span>{label}</span>
-      <button type="button" onClick={onRemove} title="Remove">
-        ×
-      </button>
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------
 // Modals — for create-group / create-room / browse-rooms
 // ---------------------------------------------------------------------
 
@@ -1484,7 +1149,6 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  // Close on Escape.
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -1792,39 +1456,10 @@ function conversationTitle(conv: ConversationView, selfID: number): string {
   return `Room #${conv.id}`;
 }
 
-function conversationSubtitle(
-  conv: ConversationView,
-  selfID: number,
-): string | null {
-  if (conv.type === "dm") return null;
-  if (conv.type === "room" && conv.topic) {
-    return `${conv.topic} — ${conv.members.length} member${
-      conv.members.length === 1 ? "" : "s"
-    }`;
-  }
-  const names = conv.members
-    .filter((m) => m.id !== selfID)
-    .map((m) => m.username)
-    .join(", ");
-  return names ? `${conv.members.length} members: you, ${names}` : "Just you";
-}
-
 function conversationIcon(conv: ConversationView): string {
   if (conv.type === "room") return "#";
   if (conv.type === "group") return "⊙";
   return "•";
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
 }
 
 function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {
@@ -1832,29 +1467,4 @@ function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {
   for (const m of a) byID.set(m.id, m);
   for (const m of b) byID.set(m.id, m);
   return Array.from(byID.values()).sort((x, y) => x.id - y.id);
-}
-
-function cryptoRandomID(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function formatTypers(names: string[]): string {
-  if (names.length === 0) return "";
-  if (names.length === 1) return `${names[0]} is`;
-  if (names.length === 2) return `${names[0]} and ${names[1]} are`;
-  return `${names[0]}, ${names[1]}, and ${names.length - 2} more are`;
 }

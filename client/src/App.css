@@ -479,49 +479,42 @@ button:disabled {
   padding: 0.35rem 0.7rem;
 }
 
-/* --- Floating chat windows --- */
+/* --- Chat sub-window (its own Tauri OS window) ---
+ *
+ * `.chat-window-app` fills the entire OS window. Header is a thin
+ * MSN-blue band; the rest is the thread + composer column. No drag /
+ * minimize / close chrome in here — the OS title bar handles them. */
 
-.windows-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  top: 3rem; /* below the topbar */
-}
-
-.chat-window {
-  position: absolute;
-  pointer-events: auto;
+.chat-window-app {
   background: rgba(20, 20, 22, 0.96);
   color: #f3f4f6;
-  border: 1px solid rgba(127, 127, 127, 0.35);
-  border-radius: 0.5rem;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  height: 100vh;
+  width: 100vw;
   overflow: hidden;
 }
 
-/* MSN-style nudge: a brief rapid wobble. The transform is independent
-   of the .chat-window's absolute positioning, so the shake just adds
-   on top of left/top without losing the window's place. */
+@media (prefers-color-scheme: light) {
+  .chat-window-app {
+    background: #ffffff;
+    color: #111827;
+  }
+}
+
+/* MSN-style nudge wobble. We translate the contents of the window
+   rather than the OS window itself (which the API can't animate). */
 @keyframes shake {
   0%, 100% { transform: translate(0, 0); }
   10%, 30%, 50%, 70%, 90% { transform: translate(-6px, -2px); }
   20%, 40%, 60%, 80% { transform: translate(6px, 2px); }
 }
 
-.chat-window.shaking {
+.chat-window-app.shaking {
   animation: shake 700ms cubic-bezier(.36, .07, .19, .97);
 }
 
-@media (prefers-color-scheme: light) {
-  .chat-window {
-    background: #ffffff;
-    color: #111827;
-  }
-}
-
-.chat-window-header {
+.chat-window-app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -530,12 +523,8 @@ button:disabled {
   background: linear-gradient(to bottom, var(--msn-blue-light), var(--msn-blue));
   border-bottom: 1px solid var(--msn-blue-dark);
   color: #ffffff;
-  cursor: grab;
   user-select: none;
-}
-
-.chat-window-header.dragging {
-  cursor: grabbing;
+  flex: 0 0 auto;
 }
 
 .chat-window-title {
@@ -780,72 +769,6 @@ button:disabled {
   opacity: 0.65;
   font-family: ui-monospace, monospace;
   font-size: 0.72rem;
-}
-
-/* --- Minimized bar (taskbar-style) --- */
-
-.minimized-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.4rem 0.6rem;
-  background: linear-gradient(to bottom, #ffffff, #dde7f7);
-  border-top: 1px solid var(--msn-border);
-  z-index: 5000;
-}
-
-@media (prefers-color-scheme: dark) {
-  .minimized-bar {
-    background: linear-gradient(to bottom, #1f283c, #131826);
-  }
-}
-
-.min-chip {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  border-radius: 0.3rem;
-  background: rgba(127, 127, 127, 0.05);
-  overflow: hidden;
-}
-
-.min-chip-restore {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.5rem;
-  background: transparent;
-  border: none;
-  color: inherit;
-  font: inherit;
-}
-
-.min-chip-restore:hover {
-  background: rgba(127, 127, 127, 0.12);
-}
-
-.min-chip-title {
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.min-chip-close {
-  background: transparent;
-  border: none;
-  border-left: 1px solid rgba(127, 127, 127, 0.25);
-  padding: 0.3rem 0.5rem;
-  color: inherit;
-  opacity: 0.6;
-}
-
-.min-chip-close:hover {
-  opacity: 1;
 }
 
 /* --- Modals --- */

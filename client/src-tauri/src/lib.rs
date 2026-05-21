@@ -72,11 +72,18 @@ pub fn run() {
         })
         // ----- Close-to-tray ---------------------------------------
         //
-        // Clicking the window's [X] hides the window instead of
+        // Clicking the [X] on the MAIN window hides it instead of
         // exiting the process. Quit is only reachable through the
         // tray's "Quit" item, so the app keeps running and receiving
         // WS messages in the background.
+        //
+        // Chat sub-windows (label `chat-{id}`) are real children — let
+        // their [X] close them normally so the conversation can drop
+        // out of view without taking the app down.
         .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();
