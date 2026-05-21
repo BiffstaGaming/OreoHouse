@@ -102,6 +102,21 @@ export interface TypingMessage {
   user: UserInfo;
 }
 
+// Client→server: nudge everyone else in this conversation. Clients
+// should self-impose a ~3s cooldown on the send button.
+export interface IncomingNudgeMessage {
+  type: "nudge";
+  conversation_id: number;
+}
+
+// Server→other-members: shake the chat window and play the nudge
+// sound. Restore the window from minimized state if needed.
+export interface NudgeMessage {
+  type: "nudge";
+  conversation_id: number;
+  sender: UserInfo;
+}
+
 export interface WSErrorMessage {
   type: "error";
   code: string;
@@ -160,13 +175,15 @@ export type ServerMessage =
   | OutgoingMessage
   | ConversationAddedMessage
   | ConversationMembersChangedMessage
-  | TypingMessage;
+  | TypingMessage
+  | NudgeMessage;
 
 export type ClientMessage =
   | PingMessage
   | IncomingMessage
   | StatusMessage
-  | IncomingTypingMessage;
+  | IncomingTypingMessage
+  | IncomingNudgeMessage;
 
 // --- REST: /api/conversations* -------------------------------------
 

@@ -69,6 +69,8 @@ const WINDOW_DEFAULT_SIZE = { w: 380, h: 460 };
 const WINDOW_MIN_VISIBLE = 80; // keep at least this many px on-screen when dragging
 const TYPING_SEND_THROTTLE_MS = 2000; // outgoing typing events
 const TYPING_EXPIRY_MS = 5000; // how long an incoming typing indicator sticks
+const NUDGE_COOLDOWN_MS = 3000; // sender-side button cooldown
+const SHAKE_DURATION_MS = 700; // matches the CSS @keyframes shake length
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -181,6 +183,9 @@ function ChatScreen({
   const [typing, setTyping] = useState<
     Map<number, Map<number, { username: string; expiresAt: number }>>
   >(new Map());
+  // Set of conversation IDs whose chat window should be shaking right
+  // now. Entries auto-clear after SHAKE_DURATION_MS.
+  const [shaking, setShaking] = useState<Set<number>>(new Set());
   const [modal, setModal] = useState<ModalKind | null>(null);
   const [historyLoading, setHistoryLoading] = useState<Set<number>>(new Set());
   const wsRef = useRef<WSClient | null>(null);
@@ -281,6 +286,9 @@ function ChatScreen({
           out.set(msg.conversation_id, inner);
           return out;
         });
+        return;
+      case "nudge":
+        triggerNudgeReceived(msg.conversation_id);
         return;
       case "conversation_members_changed":
         setConversations((prev) => {
@@ -483,6 +491,39 @@ function ChatScreen({
     });
   }
 
+  function sendNudge(convID: number) {
+    if (!wsRef.current) return;
+    wsRef.current.send({
+      type: "nudge",
+      conversation_id: convID,
+    });
+  }
+
+  // triggerNudgeReceived shakes the conversation's chat window for
+  // SHAKE_DURATION_MS, opening or restoring the window first if it
+  // isn't already visible.
+  function triggerNudgeReceived(convID: number) {
+    // Open the window if it's closed or minimized so the user can
+    // actually see the shake.
+    const w = openWindowsRef.current.get(convID);
+    if (!w || w.minimized) {
+      openConvWindow(convID);
+    }
+    setShaking((prev) => {
+      const out = new Set(prev);
+      out.add(convID);
+      return out;
+    });
+    setTimeout(() => {
+      setShaking((prev) => {
+        if (!prev.has(convID)) return prev;
+        const out = new Set(prev);
+        out.delete(convID);
+        return out;
+      });
+    }, SHAKE_DURATION_MS);
+  }
+
   function updateStatus(state: UserState, customText: string) {
     if (state === "offline") return; // server rejects this
     setMyState(state);
@@ -621,12 +662,14 @@ function ChatScreen({
               state={state}
               messages={messages.get(convID) ?? []}
               typers={typers}
+              shaking={shaking.has(convID)}
               onMove={(p) => setConvWindowPos(convID, p)}
               onClose={() => closeConvWindow(convID)}
               onMinimize={() => minimizeConvWindow(convID)}
               onFocus={() => bringToFront(convID)}
               onSend={(body, atts) => sendMessage(convID, body, atts)}
               onTyping={() => sendTyping(convID)}
+              onNudge={() => sendNudge(convID)}
               onLeave={() => handleLeave(conv)}
             />
           );
@@ -977,12 +1020,14 @@ function ChatWindow({
   state,
   messages,
   typers,
+  shaking,
   onMove,
   onClose,
   onMinimize,
   onFocus,
   onSend,
   onTyping,
+  onNudge,
   onLeave,
 }: {
   session: Session;
@@ -990,21 +1035,31 @@ function ChatWindow({
   state: ChatWindowState;
   messages: MessageView[];
   typers: { username: string; expiresAt: number }[];
+  shaking: boolean;
   onMove: (pos: { x: number; y: number }) => void;
   onClose: () => void;
   onMinimize: () => void;
   onFocus: () => void;
   onSend: (body: string, attachmentIDs?: number[]) => void;
   onTyping: () => void;
+  onNudge: () => void;
   onLeave: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [nudgeCooldown, setNudgeCooldown] = useState(false);
   const dragRef = useRef({ startX: 0, startY: 0, startPosX: 0, startPosY: 0 });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastTypingSentAt = useRef(0);
+
+  function handleNudgeClick() {
+    if (nudgeCooldown) return;
+    onNudge();
+    setNudgeCooldown(true);
+    setTimeout(() => setNudgeCooldown(false), NUDGE_COOLDOWN_MS);
+  }
 
   // Scroll to bottom whenever new messages arrive in this window.
   useEffect(() => {
@@ -1115,7 +1170,7 @@ function ChatWindow({
 
   return (
     <section
-      className="chat-window"
+      className={`chat-window ${shaking ? "shaking" : ""}`}
       style={{
         left: state.position.x,
         top: state.position.y,
@@ -1136,6 +1191,15 @@ function ChatWindow({
           )}
         </div>
         <div className="chat-window-buttons">
+          <button
+            type="button"
+            className="chat-window-button"
+            title={nudgeCooldown ? "Wait a moment…" : "Nudge"}
+            onClick={handleNudgeClick}
+            disabled={nudgeCooldown}
+          >
+            👋
+          </button>
           {conv.type !== "dm" && (
             <button
               type="button"

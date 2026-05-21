@@ -366,6 +366,19 @@ button:disabled {
   overflow: hidden;
 }
 
+/* MSN-style nudge: a brief rapid wobble. The transform is independent
+   of the .chat-window's absolute positioning, so the shake just adds
+   on top of left/top without losing the window's place. */
+@keyframes shake {
+  0%, 100% { transform: translate(0, 0); }
+  10%, 30%, 50%, 70%, 90% { transform: translate(-6px, -2px); }
+  20%, 40%, 60%, 80% { transform: translate(6px, 2px); }
+}
+
+.chat-window.shaking {
+  animation: shake 700ms cubic-bezier(.36, .07, .19, .97);
+}
+
 @media (prefers-color-scheme: light) {
   .chat-window {
     background: #ffffff;

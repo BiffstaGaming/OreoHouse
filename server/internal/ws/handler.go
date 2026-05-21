@@ -227,6 +227,8 @@ func (h *Handler) reader(ctx context.Context, conn *websocket.Conn, c *Client) {
 			h.handleStatus(ctx, c, data)
 		case proto.TypeTyping:
 			h.handleTyping(ctx, c, data)
+		case proto.TypeNudge:
+			h.handleNudge(ctx, c, data)
 		default:
 			// Unknown / reserved types are silently ignored for
 			// forward-compatibility. See docs/protocol.md.
@@ -259,6 +261,54 @@ func (h *Handler) handleTyping(ctx context.Context, c *Client, raw []byte) {
 		Type:           proto.TypeTyping,
 		ConversationID: in.ConversationID,
 		User: proto.UserInfo{
+			ID:       c.user.ID,
+			Username: c.user.Username,
+		},
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	otherIDs := make([]int64, 0, len(members)-1)
+	for _, m := range members {
+		if m.UserID == c.user.ID {
+			continue
+		}
+		otherIDs = append(otherIDs, m.UserID)
+	}
+	h.hub.SendToUsers(b, otherIDs)
+}
+
+// handleNudge fans a nudge out to every other member of the target
+// conversation. Like typing, the server doesn't persist or rate-limit
+// — clients enforce a UX cooldown on the send side.
+func (h *Handler) handleNudge(ctx context.Context, c *Client, raw []byte) {
+	var in proto.IncomingNudgeMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "invalid nudge body")
+		return
+	}
+	if in.ConversationID <= 0 {
+		h.sendErrorAsync(c, proto.ErrCodeInvalidMessage, "conversation_id is required")
+		return
+	}
+	ok, err := h.convs.IsMember(ctx, in.ConversationID, c.user.ID)
+	if err != nil {
+		slog.Error("ws: nudge membership check failed", "error", err)
+		return
+	}
+	if !ok {
+		h.sendErrorAsync(c, proto.ErrCodeForbidden, "not a member of conversation")
+		return
+	}
+	members, err := h.convs.Members(ctx, in.ConversationID)
+	if err != nil {
+		return
+	}
+	out := proto.NudgeMessage{
+		Type:           proto.TypeNudge,
+		ConversationID: in.ConversationID,
+		Sender: proto.UserInfo{
 			ID:       c.user.ID,
 			Username: c.user.Username,
 		},

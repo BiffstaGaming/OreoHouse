@@ -13,6 +13,7 @@ const (
 	TypeConversationMembersChanged = "conversation_members_changed"
 	TypeStatus                     = "status"
 	TypeTyping                     = "typing"
+	TypeNudge                      = "nudge"
 )
 
 // Presence state values for PresenceMessage.State and
@@ -110,6 +111,23 @@ type TypingMessage struct {
 	Type           string   `json:"type"`
 	ConversationID int64    `json:"conversation_id"`
 	User           UserInfo `json:"user"`
+}
+
+// IncomingNudgeMessage is client→server: shake everyone else in
+// this conversation. Servers should rate-limit per-conversation if
+// abuse appears; for Phase 7 we trust the client-side cooldown.
+type IncomingNudgeMessage struct {
+	Type           string `json:"type"`
+	ConversationID int64  `json:"conversation_id"`
+}
+
+// NudgeMessage is server→other-members for a nudge event. Recipients
+// shake the corresponding chat window (opening or restoring it if
+// minimized) and play the nudge sound.
+type NudgeMessage struct {
+	Type           string   `json:"type"`
+	ConversationID int64    `json:"conversation_id"`
+	Sender         UserInfo `json:"sender"`
 }
 
 // ErrorMessage is sent server→client immediately before a connection
