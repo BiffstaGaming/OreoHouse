@@ -74,6 +74,12 @@ import {
   flashWindowIfUnfocused,
   setWindowTitle,
 } from "./lib/tauri";
+import {
+  applyTheme,
+  loadTheme,
+  saveTheme,
+  type ThemeName,
+} from "./lib/theme";
 import { checkForUpdate, type AvailableUpdate } from "./lib/updater";
 import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
@@ -360,6 +366,13 @@ function ChatScreen({
   const [mutedConvs, setMutedConvs] = useState<Set<number>>(() => loadMutedConvs());
   const mutedConvsRef = useRef(mutedConvs);
   mutedConvsRef.current = mutedConvs;
+  // Active UI theme. Initial value is whatever main.tsx already applied
+  // to documentElement on boot, so this ref-backed state stays in sync
+  // with the DOM. Changing it re-paints (via applyTheme) AND fans the
+  // new value out to every open chat sub-window.
+  const [theme, setTheme] = useState<ThemeName>(() => loadTheme());
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   // Sign-in / sign-out sounds are gated for the first few seconds
   // after we connect, so the welcome → presence delta burst doesn't
   // turn into a chorus. Armed once the page has been live a moment.
@@ -405,6 +418,18 @@ function ChatScreen({
       }
       return next;
     });
+  }
+
+  // Theme picker handler. Persists, repaints the main window, and
+  // fans the change out to every open chat sub-window so the whole UI
+  // flips in one beat.
+  function changeTheme(next: ThemeName) {
+    setTheme(next);
+    saveTheme(next);
+    applyTheme(next);
+    for (const id of openChatsRef.current) {
+      void emitTo(`chat-${id}`, EVT.ThemeChanged, { theme: next });
+    }
   }
 
   // upsertUser merges an incoming UserInfo into the cache. If the
@@ -518,7 +543,12 @@ function ChatScreen({
       unlisteners.push(
         await listen<ChatToMainEnvelope<{}>>(EVT.Ready, async (e) => {
           const cid = e.payload.conversation_id;
-          await ensureHistory(cid);
+          // ensureHistory returns the merged message list directly so we
+          // don't race against React's commit-then-sync of messagesRef.
+          // Reading messagesRef immediately after `await ensureHistory`
+          // returned an empty list on first open and forced a
+          // close/reopen to repopulate.
+          const msgsForConv = await ensureHistory(cid);
           const conv = conversationsRef.current.get(cid);
           if (!conv) return;
           const readsForConv = readsRef.current.get(cid);
@@ -529,7 +559,6 @@ function ChatScreen({
             }
           }
           const reactionsObj: Record<number, ReactionGroup[]> = {};
-          const msgsForConv = messagesRef.current.get(cid) ?? [];
           for (const m of msgsForConv) {
             const r = reactionsRef.current.get(m.id);
             if (r && r.length > 0) reactionsObj[m.id] = r;
@@ -546,6 +575,7 @@ function ChatScreen({
             reads: readsObj,
             reactions: reactionsObj,
             pinned: Array.from(pinnedRef.current.get(cid) ?? new Set()),
+            theme: themeRef.current,
           };
           await emitTo(`chat-${cid}`, EVT.Hydrate, hydrate);
         }),
@@ -1075,8 +1105,22 @@ function ChatScreen({
     }
   }
 
-  async function ensureHistory(convID: number) {
-    if (messagesRef.current.has(convID) || historyLoading.has(convID)) return;
+  // Returns the merged message list for the conversation so callers
+  // that immediately need the data don't have to wait for React to
+  // commit + sync messagesRef. This matters for the chat-window
+  // hydrate path: main awaits ensureHistory, then needs to send the
+  // freshly loaded messages over IPC right away — reading
+  // messagesRef.current at that point would still be the *previous*
+  // value because setMessages updates the ref via a separate effect.
+  async function ensureHistory(convID: number): Promise<MessageView[]> {
+    // Already loaded? Return what we have.
+    const cached = messagesRef.current.get(convID);
+    if (cached) return cached;
+    // Someone else is already loading — return whatever's in the ref
+    // (probably empty, but it's the best we can do without coordinating
+    // with the in-flight call).
+    if (historyLoading.has(convID)) return cached ?? [];
+
     setHistoryLoading((prev) => new Set(prev).add(convID));
     try {
       const rows = await listMessages(
@@ -1087,10 +1131,14 @@ function ChatScreen({
         HISTORY_PAGE_SIZE,
       );
       const asc = [...rows].sort((a, b) => a.id - b.id);
+      // Merge with any live messages that may have arrived via WS
+      // while the REST page was in flight. messagesRef holds the most
+      // current snapshot.
+      const live = messagesRef.current.get(convID) ?? [];
+      const merged = mergeByID(asc, live);
       setMessages((prev) => {
         const out = new Map(prev);
-        const incoming = prev.get(convID) ?? [];
-        out.set(convID, mergeByID(asc, incoming));
+        out.set(convID, merged);
         return out;
       });
       // Hydrate the per-message reactions cache from the page.
@@ -1106,8 +1154,10 @@ function ChatScreen({
         return out;
       });
       for (const m of asc) upsertUser(m.sender);
+      return merged;
     } catch (err) {
       console.error("listMessages failed:", err);
+      return messagesRef.current.get(convID) ?? [];
     } finally {
       setHistoryLoading((prev) => {
         const out = new Set(prev);
@@ -1417,6 +1467,8 @@ function ChatScreen({
           me={userCache.get(session.user.id) ?? session.user}
           serverUrl={session.serverUrl}
           token={session.token}
+          theme={theme}
+          onThemeChange={changeTheme}
           onClose={() => setProfileOpen(false)}
         />
       )}

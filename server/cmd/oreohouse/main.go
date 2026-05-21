@@ -107,7 +107,7 @@ func runServe(args []string) error {
 	profileHandler := api.NewProfileHandler(authSvc, attachmentsSvc, hub)
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
 	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))
-	searchHandler := api.NewSearchHandler(authSvc, convsSvc, msgsSvc)
+	searchHandler := api.NewSearchHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go hub.Run(ctx)

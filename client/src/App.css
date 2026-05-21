@@ -676,6 +676,10 @@ button:disabled {
 .chat-thread {
   flex: 1;
   overflow-y: auto;
+  /* Defensive: clip any descendant that bleeds past the right edge
+   * (e.g. the reaction emoji picker before its right-anchor override
+   * kicks in) so the chat window doesn't grow a horizontal scrollbar. */
+  overflow-x: hidden;
   padding: 0.6rem 0.8rem;
   display: flex;
   flex-direction: column;
@@ -938,6 +942,24 @@ button:disabled {
   margin-top: 0;
   margin-bottom: 4px;
 }
+/* The .emoji-picker component's own positioning is `left: 0` because
+ * the composer picker opens leftward from its anchor. Inside the
+ * inline reaction toolbar (which lives on the RIGHT edge of every
+ * message bubble), we want the picker to extend LEFT instead — so
+ * override to right: 0 here. Without this the 280-px picker opens
+ * off the right edge of the chat window. */
+.msg-toolbar-picker .emoji-picker {
+  left: auto;
+  right: 0;
+}
+/* Same idea for the vertical axis when flip-up is active: the picker
+ * sits ABOVE the toolbar instead of below, so cancel its own
+ * `bottom: calc(100% + 6px)` and pin it from the top of the wrapper
+ * (the wrapper's `bottom: 100%` already places it above). */
+.msg-toolbar-picker.flip-up .emoji-picker {
+  bottom: auto;
+  top: 0;
+}
 
 /* --- Edited / deleted markers + reply quote --- */
 .msg-edited {
@@ -950,29 +972,42 @@ button:disabled {
   font-style: italic;
   opacity: 0.55;
 }
+/* Teams-style reply block: sender name on top, quoted body below
+ * (clamped to ~3 lines), visually separated by a coloured left border
+ * and a tint. Sits directly above .msg-meta + .msg-body in the bubble. */
 .msg-quote {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.45rem;
-  margin-bottom: 0.3rem;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.55rem 0.4rem;
+  margin-bottom: 0.4rem;
   background: rgba(127, 127, 127, 0.1);
   border-left: 3px solid var(--msn-blue-light);
   border-radius: 0.25rem;
-  font-size: 0.78rem;
-  opacity: 0.85;
+  font-size: 0.8rem;
   overflow: hidden;
 }
 .msg-quote-arrow {
   opacity: 0.65;
+  margin-right: 0.1rem;
 }
 .msg-quote-sender {
   font-weight: 600;
+  color: var(--msn-blue-dark);
+  font-size: 0.78rem;
 }
 .msg-quote-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  opacity: 0.85;
+}
+.msg-quote-deleted {
+  font-style: italic;
+  opacity: 0.7;
 }
 
 /* Edit / delete toolbar buttons share msg-toolbar-btn styles; the
@@ -1015,6 +1050,10 @@ button:disabled {
   width: min(40rem, 100%);
 }
 .search-input {
+  /* box-sizing: border-box is essential here. Without it the input's
+   * computed width (100% + 1.4rem padding) overflows the modal body
+   * and a horizontal scrollbar appears the moment the modal opens. */
+  box-sizing: border-box;
   width: 100%;
   padding: 0.5rem 0.7rem;
   font-size: 1rem;
@@ -1073,6 +1112,161 @@ button:disabled {
   font-size: 0.88rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.search-result-files {
+  margin-top: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--msn-text-muted);
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.search-result-files-icon {
+  opacity: 0.7;
+}
+
+/* --- Media + Links panel --- */
+.media-links-modal {
+  width: min(40rem, 100%);
+}
+.ml-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--msn-border);
+  padding: 0 0.6rem;
+  background: var(--msn-bg-soft);
+}
+.ml-tab {
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--msn-text-muted);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+.ml-tab:hover {
+  color: var(--msn-text);
+}
+.ml-tab-active {
+  color: var(--msn-blue-dark);
+  border-bottom-color: var(--msn-blue);
+}
+.ml-section-title {
+  margin: 0.4rem 0 0.5rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--msn-text-muted);
+  font-weight: 700;
+}
+.ml-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.ml-image-tile {
+  display: block;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border: 1px solid var(--msn-border);
+  border-radius: 0.4rem;
+  background: var(--msn-bg-soft);
+}
+.ml-image-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.18s;
+}
+.ml-image-tile:hover img {
+  transform: scale(1.04);
+}
+.ml-file-list,
+.ml-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.ml-file-row,
+.ml-link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 0.4rem;
+  text-decoration: none;
+  color: var(--msn-text);
+  background: var(--msn-bg-soft);
+}
+.ml-file-row:hover,
+.ml-link-row:hover {
+  background: rgba(74, 141, 232, 0.08);
+  border-color: var(--msn-blue-light);
+}
+.ml-file-icon {
+  font-size: 1.2rem;
+  opacity: 0.75;
+}
+.ml-file-meta,
+.ml-link-row {
+  min-width: 0;
+}
+.ml-file-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ml-file-name,
+.ml-link-url {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.ml-file-sub,
+.ml-link-sub {
+  color: var(--msn-text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-link-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.7rem;
+  row-gap: 0.1rem;
+}
+.ml-link-host {
+  grid-row: 1 / span 2;
+  align-self: center;
+  background: var(--msn-blue);
+  color: #fff;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: lowercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.ml-link-url {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ml-link-sub {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 /* --- Reaction pills under message bubbles --- */
@@ -1374,6 +1568,10 @@ button:disabled {
 .modal-body {
   padding: 0.9rem;
   overflow-y: auto;
+  /* Defensive: clip any descendant that bleeds past the right edge
+   * (e.g. a child input with width:100% + padding that hasn't set
+   * box-sizing) so the modal never grows a horizontal scrollbar. */
+  overflow-x: hidden;
 }
 
 /* --- Forms (in modals) --- */
@@ -1477,4 +1675,346 @@ button:disabled {
   padding: 0.05rem 0.4rem;
   border: 1px solid rgba(127, 127, 127, 0.35);
   border-radius: 1rem;
+}
+
+/* ==========================================================================
+ * THEMES
+ *
+ * The existing styles above are the "classic" MSN throwback look.
+ * Aurora (default) and Daylight override the --msn-* variables AND
+ * the handful of selectors that hardcode bevel gradients so each
+ * theme reads as a distinct visual style, not just a recolour.
+ *
+ * Switched at runtime via lib/theme.ts which sets `data-theme` on
+ * documentElement. main.tsx applies the saved value before the first
+ * paint to avoid a flash of the wrong skin.
+ * ========================================================================== */
+
+/* --- AURORA (default) — modern dark, flat, violet accent ---------------- */
+
+:root[data-theme="aurora"] {
+  --msn-blue:        #8b6cff;
+  --msn-blue-light:  #a48dff;
+  --msn-blue-dark:   #6b4dff;
+  --msn-bg:          #0e1117;
+  --msn-bg-soft:     #161b22;
+  --msn-text:        #e6ecf7;
+  --msn-text-muted:  #8b96b0;
+  --msn-border:      #232b3a;
+  --msn-border-soft: #1c2330;
+  color-scheme: dark;
+}
+
+/* Surfaces flat, no bevel gradients. */
+:root[data-theme="aurora"] body,
+:root[data-theme="aurora"] .phase6 {
+  background: var(--msn-bg);
+}
+:root[data-theme="aurora"] .topbar {
+  background: linear-gradient(180deg, #1b2230, #161b22);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="aurora"] .topbar button {
+  background: #232b3a;
+  border: 1px solid var(--msn-border);
+  color: var(--msn-text);
+}
+:root[data-theme="aurora"] .topbar button:hover:not(:disabled) {
+  background: #2c3548;
+  border-color: var(--msn-blue);
+}
+:root[data-theme="aurora"] .login-screen {
+  background:
+    radial-gradient(circle at 20% 10%, #1f1538 0%, transparent 50%),
+    radial-gradient(circle at 80% 90%, #0e2236 0%, transparent 55%),
+    var(--msn-bg);
+}
+:root[data-theme="aurora"] .login-form input,
+:root[data-theme="aurora"] .composer input:not([type]),
+:root[data-theme="aurora"] .search-input,
+:root[data-theme="aurora"] .form input:not([type]) {
+  background: #1a2030;
+  border-color: var(--msn-border);
+  color: var(--msn-text);
+}
+:root[data-theme="aurora"] button {
+  background: #1f2733;
+  border: 1px solid var(--msn-border);
+  color: var(--msn-text);
+  border-radius: 0.55rem;
+}
+:root[data-theme="aurora"] button:hover:not(:disabled) {
+  background: #2a3445;
+  border-color: var(--msn-blue);
+}
+:root[data-theme="aurora"] button:active:not(:disabled) {
+  background: #161b22;
+}
+:root[data-theme="aurora"] .msg,
+:root[data-theme="aurora"] .msg-bubble {
+  background: #1a2030;
+  border-color: var(--msn-border);
+  border-radius: 0.75rem;
+}
+:root[data-theme="aurora"] .msg-mine {
+  background: linear-gradient(135deg, #5b3eff 0%, #8b6cff 100%);
+  border-color: transparent;
+  color: #ffffff;
+}
+:root[data-theme="aurora"] .msg-mine .msg-sender,
+:root[data-theme="aurora"] .msg-mine .msg-time {
+  color: rgba(255, 255, 255, 0.85);
+}
+:root[data-theme="aurora"] .contact-row {
+  border-radius: 0.55rem;
+}
+:root[data-theme="aurora"] .contact-row:hover {
+  background: #1c2330;
+}
+:root[data-theme="aurora"] .modal {
+  background: #161b22;
+  border: 1px solid var(--msn-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  color: var(--msn-text);
+}
+:root[data-theme="aurora"] .modal-header {
+  background: linear-gradient(180deg, #232b3a, #1a2030);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="aurora"] .chat-window-app-header {
+  background: linear-gradient(180deg, #232b3a, #161b22);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="aurora"] .composer {
+  background: var(--msn-bg-soft);
+  border-top-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .composer-context {
+  background: #1a2030;
+  border-color: var(--msn-border);
+}
+:root[data-theme="aurora"] .search-modal,
+:root[data-theme="aurora"] .search-result {
+  background: #1a2030;
+  border-color: var(--msn-border);
+  border-radius: 0.55rem;
+}
+:root[data-theme="aurora"] .search-result:hover {
+  background: #232b3a;
+}
+:root[data-theme="aurora"] .msg-reaction {
+  background: rgba(139, 108, 255, 0.16);
+}
+:root[data-theme="aurora"] .msg-reaction.mine {
+  background: rgba(139, 108, 255, 0.32);
+  border-color: var(--msn-blue);
+}
+:root[data-theme="aurora"] .update-banner {
+  background: linear-gradient(180deg, #2d2247, #1f1735);
+  color: #e6c9ff;
+  border-bottom-color: #4c3a85;
+}
+
+/* --- DAYLIGHT — modern light, flat, sky-blue accent --------------------- */
+
+:root[data-theme="daylight"] {
+  --msn-blue:        #0ea5e9;
+  --msn-blue-light:  #38bdf8;
+  --msn-blue-dark:   #0284c7;
+  --msn-bg:          #f6f8fc;
+  --msn-bg-soft:     #ffffff;
+  --msn-text:        #16213a;
+  --msn-text-muted:  #64748b;
+  --msn-border:      #e2e8f0;
+  --msn-border-soft: #eef1f6;
+  color-scheme: light;
+}
+
+:root[data-theme="daylight"] body,
+:root[data-theme="daylight"] .phase6 {
+  background: var(--msn-bg);
+}
+:root[data-theme="daylight"] .topbar {
+  background: var(--msn-bg-soft);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="daylight"] .topbar button {
+  background: var(--msn-bg-soft);
+  border: 1px solid var(--msn-border);
+  color: var(--msn-text);
+}
+:root[data-theme="daylight"] .topbar button:hover:not(:disabled) {
+  background: #f1f5fb;
+  border-color: var(--msn-blue);
+}
+:root[data-theme="daylight"] .login-screen {
+  background:
+    radial-gradient(circle at 20% 10%, #d3eafd 0%, transparent 50%),
+    radial-gradient(circle at 80% 90%, #cce4ff 0%, transparent 55%),
+    var(--msn-bg);
+}
+:root[data-theme="daylight"] .login-form input,
+:root[data-theme="daylight"] .composer input:not([type]),
+:root[data-theme="daylight"] .search-input,
+:root[data-theme="daylight"] .form input:not([type]) {
+  background: var(--msn-bg-soft);
+  border-color: var(--msn-border);
+  color: var(--msn-text);
+}
+:root[data-theme="daylight"] button {
+  background: var(--msn-bg-soft);
+  border: 1px solid var(--msn-border);
+  color: var(--msn-text);
+  border-radius: 0.6rem;
+}
+:root[data-theme="daylight"] button:hover:not(:disabled) {
+  background: #f1f5fb;
+  border-color: var(--msn-blue);
+}
+:root[data-theme="daylight"] .msg,
+:root[data-theme="daylight"] .msg-bubble {
+  background: var(--msn-bg-soft);
+  border-color: var(--msn-border);
+  border-radius: 0.85rem;
+  box-shadow: 0 1px 2px rgba(20, 30, 60, 0.04);
+}
+:root[data-theme="daylight"] .msg-mine {
+  background: var(--msn-blue);
+  border-color: transparent;
+  color: #ffffff;
+}
+:root[data-theme="daylight"] .msg-mine .msg-sender,
+:root[data-theme="daylight"] .msg-mine .msg-time {
+  color: rgba(255, 255, 255, 0.85);
+}
+:root[data-theme="daylight"] .contact-row {
+  border-radius: 0.55rem;
+}
+:root[data-theme="daylight"] .contact-row:hover {
+  background: #f1f5fb;
+}
+:root[data-theme="daylight"] .modal {
+  background: var(--msn-bg-soft);
+  border: 1px solid var(--msn-border);
+  border-radius: 0.85rem;
+  box-shadow: 0 16px 48px rgba(20, 30, 60, 0.12);
+}
+:root[data-theme="daylight"] .modal-header {
+  background: var(--msn-bg-soft);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="daylight"] .modal-header button {
+  color: var(--msn-text);
+}
+:root[data-theme="daylight"] .chat-window-app-header {
+  background: var(--msn-bg-soft);
+  color: var(--msn-text);
+  border-bottom: 1px solid var(--msn-border);
+}
+:root[data-theme="daylight"] .chat-window-button {
+  color: var(--msn-text);
+}
+:root[data-theme="daylight"] .composer {
+  background: var(--msn-bg-soft);
+  border-top-color: var(--msn-border);
+}
+:root[data-theme="daylight"] .composer-context {
+  background: #f1f5fb;
+  border-color: var(--msn-border);
+}
+:root[data-theme="daylight"] .search-result {
+  background: var(--msn-bg-soft);
+  border-color: var(--msn-border);
+  border-radius: 0.55rem;
+}
+:root[data-theme="daylight"] .search-result:hover {
+  background: #f1f5fb;
+}
+:root[data-theme="daylight"] .msg-reaction {
+  background: rgba(14, 165, 233, 0.1);
+}
+:root[data-theme="daylight"] .msg-reaction.mine {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: var(--msn-blue);
+}
+
+/* --- THEME PICKER (inside ProfileModal) ---------------------------------- */
+
+.theme-picker {
+  border: 1px solid var(--msn-border);
+  border-radius: 0.55rem;
+  padding: 0.6rem 0.75rem 0.75rem;
+  margin: 0;
+}
+.theme-picker legend {
+  padding: 0 0.3rem;
+  font-size: 0.85rem;
+  color: var(--msn-text-muted);
+  font-weight: 600;
+}
+.theme-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.theme-option {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 0.55rem;
+  cursor: pointer;
+  user-select: none;
+  background: var(--msn-bg-soft);
+  transition: border-color 0.12s, background 0.12s;
+}
+.theme-option:hover {
+  border-color: var(--msn-blue-light);
+}
+.theme-option-active {
+  border-color: var(--msn-blue);
+  box-shadow: 0 0 0 2px rgba(74, 141, 232, 0.22);
+}
+.theme-option input[type="radio"] {
+  accent-color: var(--msn-blue);
+  margin: 0;
+}
+.theme-swatch {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  flex: 0 0 auto;
+}
+.theme-swatch-aurora {
+  background:
+    linear-gradient(135deg, #5b3eff 0%, #8b6cff 60%, #00bcd4 110%),
+    #0e1117;
+}
+.theme-swatch-daylight {
+  background: linear-gradient(135deg, #38bdf8, #0ea5e9 70%, #ffffff);
+  border-color: #cdd5e0;
+}
+.theme-swatch-classic {
+  background: linear-gradient(180deg, #4a8de8, #2c5dab);
+}
+.theme-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.theme-label {
+  font-weight: 600;
+  color: var(--msn-text);
+}
+.theme-tagline {
+  font-size: 0.78rem;
+  color: var(--msn-text-muted);
 }

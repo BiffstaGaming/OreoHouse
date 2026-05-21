@@ -127,3 +127,35 @@ type PinView struct {
 type ListPinsResponse struct {
 	Pins []PinView `json:"pins"`
 }
+
+// MediaItem is one entry in the per-conversation media gallery.
+// Currently every attachment in the conv (image or otherwise); the
+// client may filter to images-only when rendering the "Photos" tab.
+type MediaItem struct {
+	Attachment AttachmentView `json:"attachment"`
+	MessageID  int64          `json:"message_id"`
+	Sender     UserInfo       `json:"sender"`
+	CreatedAt  string         `json:"created_at"`
+}
+
+// ListMediaResponse is the body of GET /api/conversations/{id}/media.
+// Items are newest-first; the smallest id is the cursor for the next
+// page if pagination is added later.
+type ListMediaResponse struct {
+	Items []MediaItem `json:"items"`
+}
+
+// LinkItem is one URL that appeared in a message body in the
+// conversation, with enough context to render + jump to source.
+type LinkItem struct {
+	URL            string   `json:"url"`
+	MessageID      int64    `json:"message_id"`
+	ConversationID int64    `json:"conversation_id"`
+	Sender         UserInfo `json:"sender"`
+	CreatedAt      string   `json:"created_at"`
+}
+
+// ListLinksResponse is the body of GET /api/conversations/{id}/links.
+type ListLinksResponse struct {
+	Items []LinkItem `json:"items"`
+}

@@ -12,6 +12,13 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import ChatWindowApp from "./ChatWindowApp";
+import { applyTheme, loadTheme } from "./lib/theme";
+
+// Apply the saved theme before the first paint. Chat sub-windows
+// will receive the *current* theme via their Hydrate payload too, but
+// painting at load avoids a brief flash of the default look during
+// hydration.
+applyTheme(loadTheme());
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 const match = window.location.hash.match(/^#\/chat\/(\d+)$/);

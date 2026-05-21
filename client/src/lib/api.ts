@@ -5,11 +5,13 @@ import type {
   CreateGroupRequest,
   CreateRoomRequest,
   ErrorResponse,
+  LinkItem,
   ListConversationsResponse,
   ListMessagesResponse,
   ListRoomsResponse,
   LoginRequest,
   LoginResponse,
+  MediaItem,
   MessageView,
   RoomView,
   UserInfo,
@@ -263,6 +265,38 @@ export async function searchMessages(
   });
   const body = await parseResponse<{ results: MessageView[] }>(resp);
   return body.results ?? [];
+}
+
+// listConversationMedia returns every attachment in a conversation,
+// newest first, hydrated with the sender + message id so the UI can
+// jump back to context. Backs the "Media" tab of the per-conv gallery.
+export async function listConversationMedia(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+): Promise<MediaItem[]> {
+  const resp = await fetch(
+    new URL(`/api/conversations/${conversationID}/media`, serverUrl).toString(),
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await parseResponse<{ items: MediaItem[] }>(resp);
+  return body.items ?? [];
+}
+
+// listConversationLinks extracts every URL from message bodies in a
+// conversation. Server walks the most recent ~500 messages and regex-
+// scrapes http(s) URLs. Backs the "Links" tab of the per-conv gallery.
+export async function listConversationLinks(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+): Promise<LinkItem[]> {
+  const resp = await fetch(
+    new URL(`/api/conversations/${conversationID}/links`, serverUrl).toString(),
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const body = await parseResponse<{ items: LinkItem[] }>(resp);
+  return body.items ?? [];
 }
 
 // setMyDisplayName PUTs /api/me/profile and returns the updated
