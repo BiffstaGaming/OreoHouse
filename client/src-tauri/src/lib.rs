@@ -15,6 +15,12 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // updater + process are required for the in-app auto-update
+        // banner: updater fetches + verifies the Ed25519-signed
+        // manifest, process exposes `relaunch()` so the JS side can
+        // restart the app after a successful install.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // ----- System tray -------------------------------------
             //

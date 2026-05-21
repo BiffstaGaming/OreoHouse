@@ -241,12 +241,35 @@ The packaged desktop app behaves like MSN Messenger / BeeBEEP:
 - **Nudges** are a 👋 button in each chat-window title bar. The recipient's window shakes for ~700 ms, plays a low rumble, restores from minimized if needed, and flashes the taskbar. Senders see a 3 s cooldown on the button to avoid spam.
 - **Sounds** are synthesised on demand via the Web Audio API — a short blip on incoming chat messages, a low square-wave rumble on nudges. The 🔊 / 🔇 toggle in the topbar persists per-machine in `localStorage`; no audio assets are bundled (Phase 10 polish can swap in real samples).
 - **Look & feel** got an MSN palette pass: blue gradient title bars on the chat windows and topbar, beveled white-to-blue buttons, radial-gradient status dots, and blue-bubbled own messages. Segoe UI as the primary font, with dark-mode variants of every gradient.
+- **Read receipts** appear under your own messages: **✓** when the message is delivered, **✓✓** once at least one other member has read it. In groups, the indicator becomes **✓✓ N/M** with a hover tooltip listing reader usernames. "Read" is triggered when the recipient's chat window for that conversation gains OS focus.
+- **Auto-update** is built in. On launch the app fetches the Ed25519-signed `latest.json` manifest from the GitHub Releases page and, if a newer version is available, drops a yellow banner above the topbar reading *"Update X.Y.Z available — Install"*. Clicking it downloads the verified bundle and relaunches the app — no need to re-run the installer manually for new versions.
 
 ## Windows client releases
 
 Pushing a `v*` tag also triggers [`.github/workflows/build-windows-app.yml`](.github/workflows/build-windows-app.yml), which runs on a Windows runner, builds the Tauri MSI + NSIS installers, and attaches them to a GitHub Release named after the tag. The latest release is shown in the sidebar on the repo's main page; the full list is at [Releases](https://github.com/BiffstaGaming/OreoHouse/releases).
 
 The installers aren't code-signed (hobby project, no cert). On first launch Windows SmartScreen will warn — click **More info → Run anyway**, or right-click the downloaded file → Properties → Unblock before opening.
+
+## Auto-update — signing key setup
+
+The in-app updater verifies every update bundle against the Ed25519 public key embedded in [`client/src-tauri/tauri.conf.json`](client/src-tauri/tauri.conf.json) (under `plugins.updater.pubkey`). For CI to *produce* signed releases, the corresponding **private** key has to be available to the build workflow:
+
+1. Generate the key pair locally (already done once for this repo — the public half is committed):
+   ```bash
+   cd client
+   npm run tauri signer generate -- --ci -w "$HOME/.oreohouse-updater.key"
+   ```
+   That writes the private key to `~/.oreohouse-updater.key` and the public key to `~/.oreohouse-updater.key.pub`. The private file should **never** be committed.
+2. Copy the **entire contents** of `~/.oreohouse-updater.key` (it's a single line of base64 starting with `dW50cnVzdGVkIGNvbW1lbnQ6`).
+3. Add it as a GitHub Secret on the repo:
+   - Settings → Secrets and variables → Actions → New repository secret
+   - Name: `TAURI_SIGNING_PRIVATE_KEY`
+   - Value: the key contents from step 2
+4. If you generated the key *with* a password, also add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The current key has none, so this is optional.
+
+Once the secret is set, the next `v*` tag triggers a build that emits both the MSI/NSIS installers AND a `latest.json` manifest pointing at them. The installed client picks up that manifest from `https://github.com/BiffstaGaming/OreoHouse/releases/latest/download/latest.json` on its next launch.
+
+If the secret is missing the build still succeeds — it just won't generate an updater manifest, and existing clients will keep showing the version they have.
 
 ## Versioning & releases
 

@@ -36,6 +36,65 @@ body,
   overflow: hidden;
 }
 
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Auto-update banner ---
+ *
+ * Thin strip rendered above the topbar when an update is available.
+ * Non-blocking — the rest of the UI flows underneath. */
+
+.update-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.85rem;
+  background: linear-gradient(to bottom, #fff7d6, #ffe79c);
+  color: #4a3500;
+  border-bottom: 1px solid #d6b769;
+  font-size: 0.85rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .update-banner {
+    background: linear-gradient(to bottom, #4a3500, #2e2200);
+    color: #ffe79c;
+    border-bottom-color: #6f5520;
+  }
+}
+
+.update-banner-text {
+  flex: 1;
+}
+
+.update-banner-install {
+  padding: 0.2rem 0.7rem;
+  font-size: 0.8rem;
+  background: linear-gradient(to bottom, #ffffff, #ffe79c);
+  border: 1px solid #d6b769;
+  color: #4a3500;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.update-banner-install:hover:not(:disabled) {
+  background: linear-gradient(to bottom, #fffbe8, #ffd877);
+}
+
+.update-banner-install:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.update-banner-error {
+  font-size: 0.78rem;
+  color: #b53d3d;
+}
+
 body {
   margin: 0;
   padding: 0;

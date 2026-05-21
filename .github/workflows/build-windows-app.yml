@@ -37,11 +37,19 @@ jobs:
 
       # Tag pushes (or workflow_dispatch against a tag ref): build and
       # publish a GitHub Release with the MSI + NSIS installers attached.
+      #
+      # When TAURI_SIGNING_PRIVATE_KEY is set in the repo's secrets,
+      # tauri-action also signs each artifact with the Ed25519 key and
+      # uploads a `latest.json` manifest the in-app updater consumes.
+      # The public counterpart lives in tauri.conf.json so installed
+      # clients verify update bundles before applying them.
       - name: Build + release (tag refs)
         if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: client
           tagName: ${{ github.ref_name }}
@@ -53,15 +61,22 @@ jobs:
 
             ## Client (Windows)
 
-            Pick either the `.msi` or the NSIS `.exe` from the assets below. They aren't code-signed, so Windows SmartScreen will warn on first run — click **More info → Run anyway**, or right-click the file → Properties → Unblock.
+            Pick either the `.msi` or the NSIS `.exe` from the assets below. They aren't code-signed (no publisher cert), so Windows SmartScreen will warn on first run — click **More info → Run anyway**, or right-click the file → Properties → Unblock.
+
+            Installed clients **auto-update** on launch via the included `latest.json` manifest — no need to re-download from here for subsequent versions.
           releaseDraft: false
           prerelease: false
 
       # workflow_dispatch from a branch ref (no tag): just build, upload as
-      # a workflow artifact for download from the run page.
+      # a workflow artifact for download from the run page. We sign here
+      # too so manually-built test installers carry valid updater
+      # signatures — but the env vars are tolerated when empty.
       - name: Build (non-tag, artifact only)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: client
 

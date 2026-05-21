@@ -30,6 +30,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/BiffstaGaming/OreoHouse/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEMjVFOTNGQUUzOUYzNEQKUldSTjh6bXVQK2tsblNDQUlnU2dyZEJmemtCZkpBekQ1Nnp3M0FZMEtzZHJQNzQ1d0puczZ5SlAK"
+    }
   }
 }

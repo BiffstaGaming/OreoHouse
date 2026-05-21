@@ -60,6 +60,7 @@ import {
   flashWindowIfUnfocused,
   setWindowTitle,
 } from "./lib/tauri";
+import { checkForUpdate, type AvailableUpdate } from "./lib/updater";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import type {
   ConversationView,
@@ -120,6 +121,14 @@ export default function App() {
   // validated implicitly on the first authenticated REST call — a 401
   // there clears storage and bounces us back to login.
   const [session, setSession] = useState<Session | null>(() => loadSession());
+  // One-shot update check on mount. Null = no update / not in Tauri.
+  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+
+  useEffect(() => {
+    void checkForUpdate().then((u) => {
+      if (u) setUpdate(u);
+    });
+  }, []);
 
   function handleSession(s: Session) {
     saveSession(s);
@@ -133,9 +142,56 @@ export default function App() {
   }
 
   if (!session) {
-    return <LoginScreen onSession={handleSession} />;
+    return (
+      <>
+        {update && <UpdateBanner update={update} />}
+        <LoginScreen onSession={handleSession} />
+      </>
+    );
   }
-  return <ChatScreen session={session} onSignOut={handleClearSession} />;
+  return (
+    <>
+      {update && <UpdateBanner update={update} />}
+      <ChatScreen session={session} onSignOut={handleClearSession} />
+    </>
+  );
+}
+
+// UpdateBanner: thin strip above the topbar. "Install" downloads the
+// signed artifact, verifies it, installs, and relaunches the app.
+// While installing we disable the button and show a progress label.
+function UpdateBanner({ update }: { update: AvailableUpdate }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleInstall() {
+    setBusy(true);
+    setError(null);
+    try {
+      await update.install();
+      // install() relaunches; if we're still here something went odd.
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="update-banner" role="status">
+      <span className="update-banner-text">
+        Update <strong>{update.version}</strong> available
+      </span>
+      <button
+        type="button"
+        className="update-banner-install"
+        onClick={handleInstall}
+        disabled={busy}
+      >
+        {busy ? "Installing…" : "Install"}
+      </button>
+      {error && <span className="update-banner-error">{error}</span>}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------
