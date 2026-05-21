@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.13.0...v0.14.0) (2026-05-21)
+
+
+### Features
+
+* PHP web client for browser-based access (no install required) ([dd64190](https://github.com/BiffstaGaming/OreoHouse/commit/dd641902f8f03941009ee548d4f7f7dc9a126e43))
+
 ## [0.13.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.12.0...v0.13.0) (2026-05-21)
 
 
