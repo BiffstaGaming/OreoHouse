@@ -211,6 +211,18 @@
             }).forEach(function (u) {
                 sb.appendChild(startDMRow(u));
             });
+        } else if (state.familyRosterError) {
+            // /api/users failed (typically because the deployed Go
+            // server is older than the web image and doesn't have
+            // the endpoint yet). Tell the user instead of silently
+            // hiding the section — otherwise the only symptom is
+            // "I can't see family members I haven't DM'd" with no
+            // diagnostic breadcrumb.
+            sb.appendChild(sectionHeader('Family'));
+            sb.appendChild(UI.el('div', {
+                class: 'family-roster-error',
+                title: state.familyRosterError,
+            }, 'Couldn’t load the family roster from the server. Your Go server image may need to be updated to v0.23.0 or newer.'));
         }
         if (groups.length > 0) {
             sb.appendChild(sectionHeader('Groups'));
@@ -2306,7 +2318,12 @@
                 .filter(function (u) { return !hideAlreadyIn || !preselected.has(u.id); })
                 .sort(function (a, b) { return UI.displayLabel(a).localeCompare(UI.displayLabel(b)); });
             if (all.length === 0) {
-                wrap.appendChild(UI.el('p', { class: 'placeholder', text: 'No other users known yet.' }));
+                if (state.familyRosterError) {
+                    wrap.appendChild(UI.el('p', { class: 'placeholder family-roster-error', title: state.familyRosterError },
+                        'Couldn’t load the family roster from the server. Update the Go server image to v0.23.0 or newer to see everyone here.'));
+                } else {
+                    wrap.appendChild(UI.el('p', { class: 'placeholder', text: 'No other users known yet.' }));
+                }
                 return;
             }
             all.forEach(function (u) {
@@ -2731,12 +2748,18 @@
         }
         // Fetch the full family roster so the sidebar can show people
         // you haven't DM'd yet. Without this, an offline family member
-        // you've never chatted with is invisible everywhere.
+        // you've never chatted with is invisible everywhere. If the
+        // call fails (most commonly: deployed Go server predates
+        // PR #55 and lacks the /api/users endpoint), flag it so the
+        // sidebar can render a visible hint instead of silently
+        // showing an empty Family section + a sparse Group picker.
+        state.familyRosterError = null;
         try {
             const allUsers = await API.listUsers();
             allUsers.forEach(upsertUser);
         } catch (e) {
-            console.warn('users load failed', e);
+            console.error('users load failed (Family + Group picker will be incomplete — update your Go server image):', e);
+            state.familyRosterError = e && e.message ? e.message : 'unknown';
         }
         renderSidebar();
         connect();

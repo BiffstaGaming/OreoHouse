@@ -70,8 +70,13 @@
         return request('POST', '/api/conversations/room', { name: name, topic: topic });
     }
 
-    function listRooms() {
-        return request('GET', '/api/rooms');
+    // GET /api/rooms returns `{rooms: [...]}` — unwrap so callers can
+    // .forEach() the array directly, matching the listUsers shape and
+    // hiding the wire format. (The Browse Rooms modal hit
+    // "rooms.forEach is not a function" without this.)
+    async function listRooms() {
+        const r = await request('GET', '/api/rooms');
+        return (r && r.rooms) || [];
     }
 
     function joinRoom(roomID) {
