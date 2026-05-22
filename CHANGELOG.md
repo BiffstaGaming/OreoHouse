@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.19.0...v0.19.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* Fix:  ([dd8a56f](https://github.com/BiffstaGaming/OreoHouse/commit/dd8a56fc72bf36173caaff8026e41128adae82e8))
+* **desktop:** native OS dialogs + reliable scroll-to-bottom ([1bc1f1d](https://github.com/BiffstaGaming/OreoHouse/commit/1bc1f1dd46bccf80bb53ffbd10931f019999536b))
+* **desktop:** native OS dialogs + reliable scroll-to-bottom ([dd8a56f](https://github.com/BiffstaGaming/OreoHouse/commit/dd8a56fc72bf36173caaff8026e41128adae82e8))
+
 ## [0.19.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.18.1...v0.19.0) (2026-05-22)
 
 
