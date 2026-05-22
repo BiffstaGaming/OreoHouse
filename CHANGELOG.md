@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.0...v0.20.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **admin:** stamp session client_version on WS connect ([7654581](https://github.com/BiffstaGaming/OreoHouse/commit/76545817dfb76a8090362983e8f93791ac1a6346))
+* **admin:** stamp session client_version on WS connect ([3fe0f46](https://github.com/BiffstaGaming/OreoHouse/commit/3fe0f46795b46e7868325dc241a9fa41487854b9))
+
 ## [0.20.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.19.1...v0.20.0) (2026-05-22)
 
 
