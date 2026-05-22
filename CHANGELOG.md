@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.22.0...v0.23.0) (2026-05-22)
+
+
+### Features
+
+* GET /api/users + 'Family' section so offline contacts are discoverable ([ff41b56](https://github.com/BiffstaGaming/OreoHouse/commit/ff41b569ee5f45e6d6ad52d7f32c184a501a5357))
+* GET /api/users + 'Family' section so offline contacts are discoverable ([3db6a42](https://github.com/BiffstaGaming/OreoHouse/commit/3db6a42204444e814dca6cdb28578b99497cf41f))
+
 ## [0.22.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.3...v0.22.0) (2026-05-22)
 
 
