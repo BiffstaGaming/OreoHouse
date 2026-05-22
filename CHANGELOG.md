@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.23.0...v0.23.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **client:** theme picker rows collapsed in PreferencesModal ([c5af61d](https://github.com/BiffstaGaming/OreoHouse/commit/c5af61d85dfb978a39424e383714b0eca9b50b95))
+* **client:** theme picker rows collapsed in PreferencesModal ([9c2682a](https://github.com/BiffstaGaming/OreoHouse/commit/9c2682a02a54b8c5e21e39461affd3554de5d5b0))
+
 ## [0.23.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.22.0...v0.23.0) (2026-05-22)
 
 
