@@ -71,6 +71,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Backfill the session's client_version from the optional ?v= so
+	// the admin dashboard works for users who haven't signed out/in
+	// since the column was added. Empty ?v= is a no-op (preserves any
+	// existing value). Failures are non-fatal — logging only.
+	if v := r.URL.Query().Get("v"); v != "" {
+		if err := h.auth.SetSessionClientVersion(r.Context(), token, v); err != nil {
+			slog.Warn("ws: stamp client_version failed", "error", err, "user_id", user.ID)
+		}
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// LAN-only deployment + Tauri client uses a custom-protocol
 		// origin. Phase 2 keeps the Phase 0 stance.

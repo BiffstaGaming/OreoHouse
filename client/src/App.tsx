@@ -513,7 +513,11 @@ function ChatScreen({
 
     let wsUrl: string;
     try {
-      wsUrl = httpToWs(session.serverUrl, session.token);
+      wsUrl = httpToWs(
+        session.serverUrl,
+        session.token,
+        "desktop " + APP_VERSION,
+      );
     } catch (err) {
       console.error("bad server URL", err);
       setStatus("error");
