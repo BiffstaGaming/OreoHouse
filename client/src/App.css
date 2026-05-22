@@ -2269,12 +2269,16 @@ button:disabled {
   border-color: var(--msn-blue);
 }
 
-/* --- THEME PICKER (inside ProfileModal) ----------------------------------
+/* --- THEME PICKER --------------------------------------------------------
  *
- * Compact horizontal rows: [radio] [swatch] [name + tagline]. The
- * `.form .theme-picker` selector beats `.form label`'s
- * flex-direction:column rule, which would otherwise stack the radio,
- * swatch, and label vertically into tall billboards. */
+ * Compact horizontal rows: [radio] [swatch] [name + tagline]. Used by
+ * PreferencesModal (and historically ProfileModal). The selectors used
+ * to be scoped to `.form .theme-picker` so they could out-specify
+ * `.form label { flex-direction: column }` — but the picker has moved
+ * out of the form-based ProfileModal, so the prefix would now silently
+ * break the layout outside a form. The override goes on the inner
+ * .theme-option label directly, with `.modal-body .form label` still
+ * doing column-stack on regular form labels. */
 
 .theme-picker {
   border: 1px solid var(--msn-border);
@@ -2294,15 +2298,16 @@ button:disabled {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.form .theme-picker .theme-options {
+.theme-picker .theme-options {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
   margin-top: 0.1rem;
 }
-/* Specificity above `.form label { flex-direction: column }` (0,1,1) by
- * combining three classes (0,3,0). */
-.form .theme-picker .theme-option {
+/* Combining .theme-picker + .theme-option (0,2,0) beats
+ * `.form label { flex-direction: column }` (0,1,1) when the picker
+ * is rendered inside a .form (back-compat), and works anywhere else. */
+.theme-picker .theme-option {
   display: flex;
   flex-direction: row;
   align-items: center;
