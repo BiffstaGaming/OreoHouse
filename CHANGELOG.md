@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.19.1...v0.20.0) (2026-05-22)
+
+
+### Features
+
+* polished admin dashboard + cream-version app icon set ([8756c1b](https://github.com/BiffstaGaming/OreoHouse/commit/8756c1b399ade94f83f0c18c540383dfa65ffc29))
+
 ## [0.19.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.19.0...v0.19.1) (2026-05-22)
 
 
