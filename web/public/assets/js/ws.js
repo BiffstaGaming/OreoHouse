@@ -35,7 +35,13 @@
     OreoWS.prototype.connect = function () {
         if (this._closed) return;
         const base = global.OREO.serverUrl.replace(/^http/, 'ws');
-        const url = base + '/ws?token=' + encodeURIComponent(global.OREO.token);
+        // Forward client_version as ?v= so the server stamps the
+        // session row's client_version on every connect — keeps the
+        // admin dashboard's "Last client" column current for users
+        // who haven't signed out/in since the column was added.
+        const version = global.OREO.version ? ('web ' + global.OREO.version) : '';
+        let url = base + '/ws?token=' + encodeURIComponent(global.OREO.token);
+        if (version) url += '&v=' + encodeURIComponent(version);
         const sock = new WebSocket(url);
         const self = this;
 

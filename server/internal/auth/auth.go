@@ -345,6 +345,30 @@ func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, at time.Time
 	return nil
 }
 
+// SetSessionClientVersion stamps the given session's client_version
+// column with whatever the client identified as. Called by the WS
+// handler on every connect — so a session created before the column
+// existed (NULL) gets backfilled the next time the user opens the
+// app. clientVersion is capped at 64 chars (same limit
+// CreateSessionWithVersion applies). Empty string is a no-op so we
+// never clobber a previously-set version with a missing one.
+func (s *Service) SetSessionClientVersion(
+	ctx context.Context, token, clientVersion string,
+) error {
+	if clientVersion == "" {
+		return nil
+	}
+	if len(clientVersion) > 64 {
+		clientVersion = clientVersion[:64]
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE sessions SET client_version = ? WHERE token = ?",
+		clientVersion, token); err != nil {
+		return fmt.Errorf("updating session client_version: %w", err)
+	}
+	return nil
+}
+
 // MaxDisplayNameLength bounds display-name updates. Enforced at the
 // REST layer; the column itself doesn't constrain.
 const MaxDisplayNameLength = 64

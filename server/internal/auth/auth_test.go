@@ -146,6 +146,63 @@ func TestAuthenticate_UnknownUser(t *testing.T) {
 	}
 }
 
+// SetSessionClientVersion is what the WS handler calls on every
+// connect so existing-NULL sessions get backfilled with whatever
+// client identified at connect time.
+func TestSetSessionClientVersion_UpdatesExistingRow(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, 0)
+	user, err := svc.CreateUser(ctx, "alice", "hunter2hunter")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	// Existing session created without a version (the legacy path).
+	sess, err := svc.CreateSession(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// Empty string is explicitly a no-op so we don't clobber a
+	// previously-set value with a missing header.
+	if err := svc.SetSessionClientVersion(ctx, sess.Token, ""); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	var got sql.NullString
+	if err := svc.db.QueryRowContext(ctx,
+		"SELECT client_version FROM sessions WHERE token = ?", sess.Token,
+	).Scan(&got); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got.Valid {
+		t.Errorf("empty arg shouldn't change column; got %q", got.String)
+	}
+	// Real value stamps the column.
+	if err := svc.SetSessionClientVersion(ctx, sess.Token, "desktop 0.20.0"); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	if err := svc.db.QueryRowContext(ctx,
+		"SELECT client_version FROM sessions WHERE token = ?", sess.Token,
+	).Scan(&got); err != nil {
+		t.Fatalf("query2: %v", err)
+	}
+	if !got.Valid || got.String != "desktop 0.20.0" {
+		t.Errorf("expected desktop 0.20.0, got %q", got.String)
+	}
+	// Long values get truncated to 64 chars to defend against
+	// runaway UA-style strings.
+	huge := strings.Repeat("x", 200)
+	if err := svc.SetSessionClientVersion(ctx, sess.Token, huge); err != nil {
+		t.Fatalf("huge: %v", err)
+	}
+	if err := svc.db.QueryRowContext(ctx,
+		"SELECT client_version FROM sessions WHERE token = ?", sess.Token,
+	).Scan(&got); err != nil {
+		t.Fatalf("query3: %v", err)
+	}
+	if len(got.String) != 64 {
+		t.Errorf("expected truncation to 64 chars, got len %d", len(got.String))
+	}
+}
+
 func TestCreateSession_NoTTL(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t, 0)

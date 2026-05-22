@@ -62,10 +62,21 @@ export async function logout(
 
 // httpToWs derives the WS URL for /ws from the HTTP server URL and
 // the session token. Throws if serverUrl is not a valid URL.
-export function httpToWs(serverUrl: string, token: string): string {
+//
+// clientVersion is optional and is forwarded as ?v=<...> so the
+// server can stamp the session row's client_version on every
+// connect (the admin dashboard's "Last client" column reads this).
+// Empty / omitted is fine — the server treats no-?v= as a no-op
+// and leaves any existing value alone.
+export function httpToWs(
+  serverUrl: string,
+  token: string,
+  clientVersion?: string,
+): string {
   const url = new URL("/ws", serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("token", token);
+  if (clientVersion) url.searchParams.set("v", clientVersion);
   return url.toString();
 }
 
