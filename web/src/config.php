@@ -7,6 +7,17 @@
 declare(strict_types=1);
 
 /**
+ * The user-facing version string surfaced in the About modal. Kept
+ * in sync with client/package.json by release-please's manifest
+ * extension below; bumping the desktop client also rewrites this
+ * line so both stay aligned. Pre-release-please-aware, treat as
+ * authoritative and update by hand when you cut a release.
+ */
+const OREO_VERSION = '0.16.1';
+
+const OREO_REPO_URL = 'https://github.com/BiffstaGaming/OreoHouse';
+
+/**
  * Append a content-based version query string to a static-asset path so
  * browsers re-fetch it after a deploy. The .htaccess sets
  * Cache-Control: max-age=3600 on CSS/JS — without versioning, every

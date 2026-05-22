@@ -92,6 +92,7 @@
             UI.el('div', { class: 'topbar-brand' }, [
                 UI.el('img', { class: 'topbar-icon', src: '/assets/img/icon.png', alt: '' }),
                 UI.el('span', { text: 'OreoHouse' }),
+                UI.el('span', { id: 'topbar-unread', class: 'topbar-unread' }),
             ]),
             UI.el('div', { class: 'topbar-spacer' }),
             UI.el('button', {
@@ -110,7 +111,11 @@
                 wrapAvatar(state.me, 28),
                 UI.el('span', { class: 'self-label', text: UI.displayLabel(state.me) }),
             ]),
-            UI.el('a', { class: 'topbar-link', href: '/logout.php', text: 'Sign out' }),
+            UI.el('button', {
+                class: 'topbar-icon-btn',
+                title: 'Menu',
+                onclick: function (ev) { openSettingsMenu(ev.currentTarget); },
+            }, '⚙️'),
         ]);
 
         const sidebar = UI.el('aside', { class: 'sidebar', id: 'sidebar' });
@@ -1550,6 +1555,12 @@
                     state.unread.set(m.conversation_id, (state.unread.get(m.conversation_id) || 0) + 1);
                     H.playMessageBlip();
                     updateTitleBadge();
+                    // Trigger an OS notification + ask permission the
+                    // first time we'd want to. The Notifications API
+                    // bails silently on browsers/permissions that
+                    // don't support it.
+                    maybeAskNotifications();
+                    pushNotification(m);
                 }
                 renderSidebar();
             }
@@ -1805,15 +1816,217 @@
         if (state.currentConvID) renderMain();
     }
 
-    // ---- title bar unread badge ------------------------------------
+    // ---- unread surfaces (title, topbar badge, favicon) ------------
 
     function updateTitleBadge() {
         let total = 0;
         state.unread.forEach(function (n) { total += n; });
         document.title = (total > 0 ? '(' + total + ') ' : '') + 'OreoHouse';
+        const badge = document.getElementById('topbar-unread');
+        if (badge) {
+            badge.textContent = total > 0 ? String(total) : '';
+            badge.style.display = total > 0 ? '' : 'none';
+        }
+        updateFavicon(total);
+    }
+
+    // Canvas-generated favicon. Draws the cookie icon plus a small red
+    // bubble with the count when total > 0. Cached as a base64 data
+    // URL so we only repaint when the count actually changes.
+    let _faviconBaseImg = null;
+    let _lastFaviconCount = -1;
+    function updateFavicon(total) {
+        if (total === _lastFaviconCount) return;
+        _lastFaviconCount = total;
+        const draw = function (baseImg) {
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 64;
+            const ctx = c.getContext('2d');
+            if (baseImg) {
+                ctx.drawImage(baseImg, 0, 0, 64, 64);
+            } else {
+                ctx.fillStyle = '#2c5dab';
+                ctx.fillRect(0, 0, 64, 64);
+            }
+            if (total > 0) {
+                ctx.beginPath();
+                ctx.arc(46, 18, 18, 0, Math.PI * 2);
+                ctx.fillStyle = '#dc2626';
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(total > 99 ? '99+' : String(total), 46, 19);
+            }
+            let link = document.querySelector('link[rel="icon"]');
+            if (!link) {
+                link = document.createElement('link');
+                link.rel = 'icon';
+                document.head.appendChild(link);
+            }
+            link.href = c.toDataURL('image/png');
+        };
+        if (_faviconBaseImg) { draw(_faviconBaseImg); return; }
+        const img = new Image();
+        img.onload = function () { _faviconBaseImg = img; draw(img); };
+        img.onerror = function () { draw(null); };
+        img.src = '/assets/img/icon.png';
     }
 
     setInterval(updateTitleBadge, 1000);
+
+    // ---- Browser Notifications API --------------------------------
+    //
+    // Asks permission on the first incoming message we'd want to
+    // notify about, then fires a desktop notification when a message
+    // arrives in a non-focused tab (or a different conversation).
+    // Click the notification → focus the tab + open the conv.
+
+    let _notifPermissionAsked = false;
+    function maybeAskNotifications() {
+        if (_notifPermissionAsked) return;
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'default') return;
+        _notifPermissionAsked = true;
+        try { Notification.requestPermission(); } catch (_) { /* ignore */ }
+    }
+    function pushNotification(m) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        if (document.visibilityState === 'visible' && m.conversation_id === state.currentConvID) return;
+        const sender = state.users.get(m.sender.id) || m.sender;
+        const conv = state.conversations.get(m.conversation_id);
+        const title = UI.displayLabel(sender) + (conv && conv.type !== 'dm' ? ' in ' + convDisplayName(conv) : '');
+        const body = m.body
+            ? (m.body.length > 140 ? m.body.slice(0, 139) + '…' : m.body)
+            : ((m.attachments && m.attachments.length > 0) ? '📎 ' + m.attachments[0].filename : '');
+        try {
+            const n = new Notification(title, {
+                body: body,
+                icon: '/assets/img/icon.png',
+                tag: 'oreo-conv-' + m.conversation_id,
+            });
+            n.onclick = function () {
+                window.focus();
+                openConversation(m.conversation_id);
+                n.close();
+            };
+        } catch (_) { /* iOS Safari etc */ }
+    }
+
+    // ---- Settings menu (⚙️ dropdown) ------------------------------
+
+    function openSettingsMenu(anchor) {
+        document.querySelectorAll('.settings-menu').forEach(function (n) { n.remove(); });
+        const menu = UI.el('div', { class: 'settings-menu' });
+        function item(label, onclick) {
+            return UI.el('button', {
+                class: 'settings-menu-item',
+                onclick: function () { menu.remove(); onclick(); },
+            }, label);
+        }
+        menu.appendChild(item('ℹ️ About OreoHouse', openAboutModal));
+        menu.appendChild(item('⌨️ Keyboard shortcuts', openShortcutsModal));
+        menu.appendChild(item('🔄 Check for updates', openUpdateModal));
+        const repoUrl = (window.OREO && window.OREO.repoUrl) || 'https://github.com/BiffstaGaming/OreoHouse';
+        menu.appendChild(UI.el('a', {
+            class: 'settings-menu-item',
+            href: repoUrl,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            onclick: function () { menu.remove(); },
+        }, '🐙 View on GitHub'));
+        menu.appendChild(UI.el('div', { class: 'settings-menu-sep' }));
+        menu.appendChild(UI.el('a', {
+            class: 'settings-menu-item settings-menu-danger',
+            href: '/logout.php',
+        }, '🚪 Sign out'));
+
+        document.body.appendChild(menu);
+        const r = anchor.getBoundingClientRect();
+        menu.style.right = (window.innerWidth - r.right) + 'px';
+        menu.style.top = (r.bottom + 4) + 'px';
+        setTimeout(function () {
+            document.addEventListener('click', function close(ev) {
+                if (!menu.contains(ev.target) && ev.target !== anchor) {
+                    menu.remove();
+                    document.removeEventListener('click', close, true);
+                }
+            }, true);
+        }, 0);
+    }
+
+    function openAboutModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const version = (window.OREO && window.OREO.version) || 'dev';
+        const repoUrl = (window.OREO && window.OREO.repoUrl) || 'https://github.com/BiffstaGaming/OreoHouse';
+        const card = UI.el('div', { class: 'modal about-modal' }, [
+            UI.el('img', { class: 'about-logo', src: '/assets/img/logo.png', alt: 'OreoHouse' }),
+            UI.el('h2', { text: 'OreoHouse' }),
+            UI.el('p', { class: 'about-version', text: 'Web client — version ' + version }),
+            UI.el('p', { class: 'about-blurb', text: 'Self-hosted family LAN messenger. Same accounts and conversations as the desktop app, just without the install.' }),
+            UI.el('div', { class: 'about-links' }, [
+                UI.el('a', { href: repoUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub' }),
+                UI.el('a', { href: repoUrl + '/releases', target: '_blank', rel: 'noopener noreferrer', text: 'Release notes' }),
+                UI.el('a', { href: repoUrl + '/issues', target: '_blank', rel: 'noopener noreferrer', text: 'Report a bug' }),
+            ]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    function openShortcutsModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const isMac = /Mac|iPad|iPhone/i.test(navigator.platform);
+        const cmd = isMac ? '⌘' : 'Ctrl';
+        const rows = [
+            [cmd + ' + K',     'Open search'],
+            ['Enter',          'Send message'],
+            ['Shift + Enter',  'Insert newline in composer'],
+            ['Esc',            'Cancel reply / edit / close modal'],
+            ['Click avatar',   'Open your profile + theme picker'],
+            ['Click 📌',        'View pinned messages in this conversation'],
+            ['Click 🖼️',        'View media + links in this conversation'],
+            ['Click 🔔 / 🔕',   'Toggle this conversation\'s mute'],
+            ['Click 🔊 / 🔇',   'Toggle all sounds'],
+        ];
+        const list = UI.el('table', { class: 'shortcuts-table' });
+        rows.forEach(function (r) {
+            list.appendChild(UI.el('tr', {}, [
+                UI.el('td', { class: 'shortcut-key' }, [UI.el('kbd', { text: r[0] })]),
+                UI.el('td', { class: 'shortcut-desc', text: r[1] }),
+            ]));
+        });
+        const card = UI.el('div', { class: 'modal shortcuts-modal' }, [
+            UI.el('h2', { text: 'Keyboard shortcuts' }),
+            list,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    function openUpdateModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const version = (window.OREO && window.OREO.version) || 'dev';
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Check for updates' }),
+            UI.el('p', { text: 'Currently running version ' + version + '.' }),
+            UI.el('p', { text: 'The web client always fetches the latest code on refresh — your admin pushes an update by pulling the new Docker image. Click Reload to get the latest now.' }),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Close' }),
+                UI.el('button', { class: 'primary', onclick: function () { window.location.reload(); }, text: 'Reload' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
 
     // ---- conversation creation + management modals -----------------
 
