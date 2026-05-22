@@ -278,6 +278,72 @@ export async function searchMessages(
   return body.results ?? [];
 }
 
+// searchInConversation is the same FTS5 search restricted to a single
+// conversation — backs the Ctrl+F "find in this chat" modal. Same
+// auth + parsing as the unscoped variant.
+export async function searchInConversation(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+  q: string,
+): Promise<MessageView[]> {
+  const url = new URL("/api/search", serverUrl);
+  url.searchParams.set("q", q);
+  url.searchParams.set("conversation_id", String(conversationID));
+  const resp = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await parseResponse<{ results: MessageView[] }>(resp);
+  return body.results ?? [];
+}
+
+// updateConversation PUTs /api/conversations/{id} with a partial body
+// to rename or change the topic. Pass undefined to leave a field
+// untouched, an empty string to clear it.
+export async function updateConversation(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+  patch: { name?: string; topic?: string },
+): Promise<ConversationView> {
+  return postJSONMethod<ConversationView>(
+    serverUrl,
+    token,
+    "PUT",
+    `/api/conversations/${conversationID}`,
+    patch,
+  );
+}
+
+// kickMember DELETEs /api/conversations/{id}/members/{userID}. The
+// server broadcasts conversation_members_changed which both clients
+// pick up to refresh their member list — no need to re-fetch here.
+export async function kickMember(
+  serverUrl: string,
+  token: string,
+  conversationID: number,
+  userID: number,
+): Promise<void> {
+  const url = new URL(
+    `/api/conversations/${conversationID}/members/${userID}`,
+    serverUrl,
+  );
+  const resp = await fetch(url.toString(), {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok && resp.status !== 204) {
+    let msg = `HTTP ${resp.status}`;
+    try {
+      const body = (await resp.json()) as ErrorResponse;
+      if (body.error) msg = body.error;
+    } catch {
+      /* keep fallback */
+    }
+    throw new ApiError(msg, resp.status);
+  }
+}
+
 // listConversationMedia returns every attachment in a conversation,
 // newest first, hydrated with the sender + message id so the UI can
 // jump back to context. Backs the "Media" tab of the per-conv gallery.
