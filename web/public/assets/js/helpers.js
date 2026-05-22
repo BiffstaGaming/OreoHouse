@@ -134,12 +134,32 @@
     ];
     function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
+    // /help is special — it returns the SENTINEL string '__HELP__'
+    // so the calling composer can short-circuit and pop a client-side
+    // modal instead of sending text to the conversation. All other
+    // commands expand to text that's sent normally.
+    const HELP_SENTINEL = '__OREOHOUSE_SLASH_HELP__';
+    const SLASH_HELP_ROWS = [
+        ['/help',          'Show this list of commands'],
+        ['/dice [NdM]',    'Roll N M-sided dice (default 1d6). e.g. /dice 2d6'],
+        ['/coin', '/flip', 'Flip a coin'],
+        ['/8ball <q>',     'Magic 8-ball oracle answer'],
+        ['/me <text>',     'Action message: "* alice waves"'],
+        ['/shrug [text]',  'Append ¯\\_(ツ)_/¯'],
+        ['/tableflip',     '(╯°□°)╯︵ ┻━┻'],
+        ['/unflip',        '┬─┬ノ( ゜-゜ノ)'],
+        ['/time',          'Current local time'],
+    ];
+
     function expandSlashCommand(raw) {
         const text = (raw || '').trim();
         if (!text.startsWith('/')) return raw;
         const space = text.indexOf(' ');
         const cmd = (space === -1 ? text.slice(1) : text.slice(1, space)).toLowerCase();
         const rest = space === -1 ? '' : text.slice(space + 1).trim();
+
+        // /help intercepts: app.js detects HELP_SENTINEL and pops a modal.
+        if (cmd === 'help' || cmd === 'commands') return HELP_SENTINEL;
 
         switch (cmd) {
             case 'me':
@@ -189,5 +209,7 @@
         playSignIn: playSignIn,
         playSignOut: playSignOut,
         expandSlashCommand: expandSlashCommand,
+        HELP_SENTINEL: HELP_SENTINEL,
+        SLASH_HELP_ROWS: SLASH_HELP_ROWS,
     };
 })(window);

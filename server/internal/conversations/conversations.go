@@ -259,6 +259,48 @@ func (s *Service) RemoveMember(ctx context.Context, conversationID, userID int64
 	return nil
 }
 
+// UpdateNameTopic replaces the name and topic columns. Empty strings
+// clear the corresponding column (NULL). Passing nil for either
+// pointer leaves it unchanged so callers can update one field at a
+// time. Returns ErrNotFound when the conversation doesn't exist.
+func (s *Service) UpdateNameTopic(
+	ctx context.Context, conversationID int64, name, topic *string,
+) error {
+	if name == nil && topic == nil {
+		return nil
+	}
+	// Existence check for a friendlier error path.
+	if _, err := s.Get(ctx, conversationID); err != nil {
+		return err
+	}
+	// Build the SET clause dynamically. Each non-nil pointer adds one
+	// column = ? pair; nil pointers are skipped entirely.
+	sets := make([]string, 0, 2)
+	args := make([]any, 0, 3)
+	if name != nil {
+		sets = append(sets, "name = ?")
+		if *name == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, *name)
+		}
+	}
+	if topic != nil {
+		sets = append(sets, "topic = ?")
+		if *topic == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, *topic)
+		}
+	}
+	args = append(args, conversationID)
+	q := "UPDATE conversations SET " + strings.Join(sets, ", ") + " WHERE id = ?"
+	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+		return fmt.Errorf("update conversation: %w", err)
+	}
+	return nil
+}
+
 // ListRooms returns every conversation of type 'room' in the database,
 // each with a denormalised member count. Order is most recently
 // created first.

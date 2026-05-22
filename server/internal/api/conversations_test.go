@@ -425,6 +425,107 @@ func TestLeave_RemovesSelfAndRejectsDM(t *testing.T) {
 	}
 }
 
+func TestUpdateConversation_RenameAndTopic(t *testing.T) {
+	s := newConvStack(t)
+	alice, aliceTok := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	ctx := context.Background()
+	room, _ := s.convs.CreateRoom(ctx, alice.ID, "old-name", "old-topic")
+	_ = s.convs.AddMember(ctx, room.ID, bob.ID)
+
+	// Rename + change topic in one call.
+	resp := s.do(t, http.MethodPut,
+		fmt.Sprintf("/api/conversations/%d", room.ID), aliceTok,
+		`{"name":"new-name","topic":"new-topic"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+	got, _ := s.convs.Get(ctx, room.ID)
+	if got.Name != "new-name" || got.Topic != "new-topic" {
+		t.Errorf("expected new-name/new-topic, got %q/%q", got.Name, got.Topic)
+	}
+
+	// Clearing topic via empty string.
+	resp2 := s.do(t, http.MethodPut,
+		fmt.Sprintf("/api/conversations/%d", room.ID), aliceTok,
+		`{"topic":""}`)
+	_ = resp2.Body.Close()
+	got2, _ := s.convs.Get(ctx, room.ID)
+	if got2.Topic != "" {
+		t.Errorf("expected empty topic, got %q", got2.Topic)
+	}
+	if got2.Name != "new-name" {
+		t.Errorf("name should be unchanged: %q", got2.Name)
+	}
+}
+
+func TestUpdateConversation_RejectsDMAndNonMember(t *testing.T) {
+	s := newConvStack(t)
+	alice, _ := s.seedUserWithSession(t, "alice")
+	bob, bobTok := s.seedUserWithSession(t, "bob")
+	carol, carolTok := s.seedUserWithSession(t, "carol")
+	ctx := context.Background()
+	// alice + bob in a group; carol is not.
+	g, _ := s.convs.CreateGroup(ctx, alice.ID, "g", []int64{bob.ID})
+
+	// carol can't rename — not a member. requireMembership returns
+	// 404 not 403 so we don't leak conversation existence.
+	resp := s.do(t, http.MethodPut,
+		fmt.Sprintf("/api/conversations/%d", g.ID), carolTok, `{"name":"x"}`)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member, got %d", resp.StatusCode)
+	}
+	_ = carol
+
+	// DM can't be renamed.
+	dm, _ := s.convs.FindOrCreateDM(ctx, alice.ID, bob.ID)
+	resp2 := s.do(t, http.MethodPut,
+		fmt.Sprintf("/api/conversations/%d", dm.ID), bobTok, `{"name":"x"}`)
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for DM rename, got %d", resp2.StatusCode)
+	}
+}
+
+func TestKickMember_HappyPathAndChecks(t *testing.T) {
+	s := newConvStack(t)
+	alice, aliceTok := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	carol, _ := s.seedUserWithSession(t, "carol")
+	ctx := context.Background()
+	g, _ := s.convs.CreateGroup(ctx, alice.ID, "g", []int64{bob.ID, carol.ID})
+
+	// alice kicks carol.
+	resp := s.do(t, http.MethodDelete,
+		fmt.Sprintf("/api/conversations/%d/members/%d", g.ID, carol.ID), aliceTok, "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	mems, _ := s.convs.Members(ctx, g.ID)
+	if len(mems) != 2 {
+		t.Errorf("expected 2 members remaining, got %d", len(mems))
+	}
+
+	// Can't kick yourself.
+	resp2 := s.do(t, http.MethodDelete,
+		fmt.Sprintf("/api/conversations/%d/members/%d", g.ID, alice.ID), aliceTok, "")
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 self-kick, got %d", resp2.StatusCode)
+	}
+
+	// Can't kick a user who isn't a member (carol was already kicked).
+	resp3 := s.do(t, http.MethodDelete,
+		fmt.Sprintf("/api/conversations/%d/members/%d", g.ID, carol.ID), aliceTok, "")
+	_ = resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member kick, got %d", resp3.StatusCode)
+	}
+}
+
 func TestListRooms_ReturnsAllRoomsWithCounts(t *testing.T) {
 	s := newConvStack(t)
 	alice, token := s.seedUserWithSession(t, "alice")

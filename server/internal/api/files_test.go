@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -284,6 +285,72 @@ func TestDownload_ForbiddenForNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member, got %d", resp.StatusCode)
+	}
+}
+
+func TestDownloadMessageZip_BundlesAllAttachments(t *testing.T) {
+	s := newFilesStack(t, 1<<20)
+	alice, aliceTok := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	ctx := context.Background()
+
+	c, _ := s.convs.FindOrCreateDM(ctx, alice.ID, bob.ID)
+	m, _ := s.msgs.Send(ctx, c.ID, alice.ID, "multi-file")
+	// Two attachments, including duplicate filenames to exercise the
+	// uniqueZipName collision handling.
+	a1, _ := s.attachments.Store(ctx, alice.ID, "doc.pdf", "application/pdf", strings.NewReader("file1"), 1<<20)
+	_ = s.attachments.Attach(ctx, a1.ID, m.ID, alice.ID)
+	a2, _ := s.attachments.Store(ctx, alice.ID, "doc.pdf", "application/pdf", strings.NewReader("file2-different"), 1<<20)
+	_ = s.attachments.Attach(ctx, a2.ID, m.ID, alice.ID)
+
+	req, _ := http.NewRequest(http.MethodGet,
+		s.srv.URL+"/api/messages/"+itoa(m.ID)+"/attachments.zip", nil)
+	req.Header.Set("Authorization", "Bearer "+aliceTok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("Content-Type: got %q want application/zip", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("not a valid zip: %v", err)
+	}
+	if len(zr.File) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(zr.File))
+	}
+	names := []string{zr.File[0].Name, zr.File[1].Name}
+	// Expect doc.pdf then doc (2).pdf via uniqueZipName.
+	if names[0] != "doc.pdf" || names[1] != "doc (2).pdf" {
+		t.Errorf("expected ['doc.pdf','doc (2).pdf'], got %v", names)
+	}
+}
+
+func TestDownloadMessageZip_DeniesNonMembers(t *testing.T) {
+	s := newFilesStack(t, 1<<20)
+	alice, _ := s.seedUserWithSession(t, "alice")
+	bob, _ := s.seedUserWithSession(t, "bob")
+	_, carolTok := s.seedUserWithSession(t, "carol")
+	ctx := context.Background()
+
+	c, _ := s.convs.FindOrCreateDM(ctx, alice.ID, bob.ID)
+	m, _ := s.msgs.Send(ctx, c.ID, alice.ID, "private")
+	a, _ := s.attachments.Store(ctx, alice.ID, "x.txt", "text/plain", strings.NewReader("nope"), 1<<20)
+	_ = s.attachments.Attach(ctx, a.ID, m.ID, alice.ID)
+
+	req, _ := http.NewRequest(http.MethodGet,
+		s.srv.URL+"/api/messages/"+itoa(m.ID)+"/attachments.zip", nil)
+	req.Header.Set("Authorization", "Bearer "+carolTok)
+	resp, _ := http.DefaultClient.Do(req)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 for non-member, got %d", resp.StatusCode)

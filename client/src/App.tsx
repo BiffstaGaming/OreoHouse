@@ -360,6 +360,10 @@ function ChatScreen({
   pinnedRef.current = pinned;
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  // Settings dropdown + the modals it opens.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Set of conv IDs the user has individually muted (suppresses sound
   // + flash + unread on incoming messages for those convs). Persisted
   // per-machine via localStorage.
@@ -1456,9 +1460,35 @@ function ChatScreen({
           >
             {muted ? "🔇" : "🔊"}
           </button>
-          <button type="button" onClick={handleSignOut}>
-            Sign out
-          </button>
+          <div className="settings-anchor">
+            <button
+              type="button"
+              className="mute-toggle"
+              onClick={() => setMenuOpen((v) => !v)}
+              title="Menu"
+            >
+              ⚙️
+            </button>
+            {menuOpen && (
+              <SettingsMenu
+                onClose={() => setMenuOpen(false)}
+                onAbout={() => { setMenuOpen(false); setAboutOpen(true); }}
+                onShortcuts={() => { setMenuOpen(false); setShortcutsOpen(true); }}
+                onCheckUpdate={async () => {
+                  setMenuOpen(false);
+                  const u = await checkForUpdate();
+                  if (u) {
+                    if (confirm(`Update available: ${u.version}. Install now?`)) {
+                      try { await u.install(); } catch (e) { alert("Update failed: " + (e as Error).message); }
+                    }
+                  } else {
+                    alert("You're on the latest version.");
+                  }
+                }}
+                onSignOut={() => { setMenuOpen(false); handleSignOut(); }}
+              />
+            )}
+          </div>
         </div>
       </header>
 
@@ -1483,6 +1513,8 @@ function ChatScreen({
           onClose={() => setSearchOpen(false)}
         />
       )}
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
 
       <ContactList
         self={session.user}
@@ -2189,4 +2221,153 @@ function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {
   for (const m of a) byID.set(m.id, m);
   for (const m of b) byID.set(m.id, m);
   return Array.from(byID.values()).sort((x, y) => x.id - y.id);
+}
+
+// ----------------------------------------------------------------------
+// Settings menu (⚙️ dropdown) + About / Keyboard-shortcuts modals.
+// Tiny presentational components kept inline because they only exist
+// to ship a few rows of JSX each.
+// ----------------------------------------------------------------------
+
+const REPO_URL = "https://github.com/BiffstaGaming/OreoHouse";
+const APP_VERSION = "0.16.1"; // synced manually with client/package.json
+
+function SettingsMenu({
+  onClose,
+  onAbout,
+  onShortcuts,
+  onCheckUpdate,
+  onSignOut,
+}: {
+  onClose: () => void;
+  onAbout: () => void;
+  onShortcuts: () => void;
+  onCheckUpdate: () => void;
+  onSignOut: () => void;
+}) {
+  useEffect(() => {
+    function close(e: MouseEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && !t.closest(".settings-menu") && !t.closest(".settings-anchor")) {
+        onClose();
+      }
+    }
+    function esc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("click", close, true);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("click", close, true);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [onClose]);
+  return (
+    <div className="settings-menu">
+      <button type="button" className="settings-menu-item" onClick={onAbout}>
+        ℹ️ About OreoHouse
+      </button>
+      <button type="button" className="settings-menu-item" onClick={onShortcuts}>
+        ⌨️ Keyboard shortcuts
+      </button>
+      <button type="button" className="settings-menu-item" onClick={onCheckUpdate}>
+        🔄 Check for updates
+      </button>
+      <a
+        className="settings-menu-item"
+        href={REPO_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClose}
+      >
+        🐙 View on GitHub
+      </a>
+      <div className="settings-menu-sep" />
+      <button
+        type="button"
+        className="settings-menu-item settings-menu-danger"
+        onClick={onSignOut}
+      >
+        🚪 Sign out
+      </button>
+    </div>
+  );
+}
+
+function AboutModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    function esc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+  return (
+    <div className="modal-overlay" onMouseDown={onClose}>
+      <div className="modal about-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <header className="modal-header">
+          <h2>About OreoHouse</h2>
+          <button type="button" onClick={onClose} aria-label="Close">×</button>
+        </header>
+        <div className="modal-body about-body">
+          <img className="about-logo" src={logoUrl} alt="Oreo House" />
+          <p className="about-version">Desktop client — version {APP_VERSION}</p>
+          <p className="about-blurb">
+            Self-hosted family LAN messenger. MSN-Messenger flavour, modern guts,
+            zero cloud dependencies.
+          </p>
+          <div className="about-links">
+            <a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a href={`${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer">Release notes</a>
+            <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">Report a bug</a>
+          </div>
+          <div className="form-actions">
+            <button type="button" className="primary" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    function esc(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+  const isMac = /Mac|iPad|iPhone/i.test(navigator.platform);
+  const cmd = isMac ? "⌘" : "Ctrl";
+  const rows: [string, string][] = [
+    [`${cmd} + K`,    "Open search"],
+    ["Enter",         "Send message"],
+    ["Shift + Enter", "Insert newline in composer"],
+    ["Esc",           "Cancel reply / edit / close modal"],
+    ["Click avatar",  "Open profile + theme picker"],
+    ["Click 📌",       "View pinned messages"],
+    ["Click 🖼️",       "View media + links"],
+    ["Click 🔔 / 🔕",  "Toggle conversation mute"],
+    ["Click 🔊 / 🔇",  "Toggle all sounds"],
+  ];
+  return (
+    <div className="modal-overlay" onMouseDown={onClose}>
+      <div className="modal shortcuts-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <header className="modal-header">
+          <h2>Keyboard shortcuts</h2>
+          <button type="button" onClick={onClose} aria-label="Close">×</button>
+        </header>
+        <div className="modal-body">
+          <table className="shortcuts-table">
+            <tbody>
+              {rows.map(([k, d]) => (
+                <tr key={k}>
+                  <td className="shortcut-key"><kbd>{k}</kbd></td>
+                  <td className="shortcut-desc">{d}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="form-actions">
+            <button type="button" className="primary" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

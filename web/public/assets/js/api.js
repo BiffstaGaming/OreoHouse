@@ -131,6 +131,13 @@
         return global.OREO.serverUrl + '/api/files/' + attachmentID + '?token=' + t;
     }
 
+    // URL for /api/messages/{id}/attachments.zip — the "Save all"
+    // bundle. Browser triggers a single download; the server streams.
+    function messageAttachmentsZipURL(messageID) {
+        const t = encodeURIComponent(global.OREO.token);
+        return global.OREO.serverUrl + '/api/messages/' + messageID + '/attachments.zip?token=' + t;
+    }
+
     // --- search + media/links ------------------------------------------
 
     async function searchMessages(query) {
@@ -161,6 +168,39 @@
         return (r && r.pins) || [];
     }
 
+    // PUT /api/conversations/{id} — rename or change-topic. Pass nullable
+    // strings: undefined leaves the field untouched, empty string clears.
+    async function updateConversation(conversationID, body) {
+        return request('PUT', '/api/conversations/' + conversationID, body);
+    }
+
+    // DELETE /api/conversations/{id}/members/{userID} — kick another user.
+    async function kickMember(conversationID, userID) {
+        const res = await fetch(global.OREO.serverUrl + '/api/conversations/' + conversationID + '/members/' + userID, {
+            method: 'DELETE',
+            headers: authHeader(),
+        });
+        if (res.status === 401) { window.location.href = '/logout.php'; throw new Error('session expired'); }
+        if (res.status !== 204 && !res.ok) {
+            let msg = 'kick failed: ' + res.status;
+            try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+            throw new Error(msg);
+        }
+    }
+
+    // GET /api/search?q=...&conversation_id={id} — search inside one
+    // conversation only. Used by Ctrl+F.
+    async function searchInConversation(conversationID, query) {
+        const url = new URL('/api/search', global.OREO.serverUrl);
+        url.searchParams.set('q', query);
+        url.searchParams.set('conversation_id', String(conversationID));
+        const res = await fetch(url.toString(), { headers: authHeader() });
+        if (res.status === 401) { window.location.href = '/logout.php'; throw new Error('session expired'); }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const body = await res.json();
+        return body.results || [];
+    }
+
     global.OreoAPI = {
         listConversations: listConversations,
         listMessages: listMessages,
@@ -177,9 +217,13 @@
         avatarURL: avatarURL,
         uploadFile: uploadFile,
         fileURL: fileURL,
+        messageAttachmentsZipURL: messageAttachmentsZipURL,
         searchMessages: searchMessages,
         listConversationMedia: listConversationMedia,
         listConversationLinks: listConversationLinks,
         listPins: listPins,
+        updateConversation: updateConversation,
+        kickMember: kickMember,
+        searchInConversation: searchInConversation,
     };
 })(window);

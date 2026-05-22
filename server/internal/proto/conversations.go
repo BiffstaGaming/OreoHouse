@@ -31,6 +31,15 @@ type AddMembersRequest struct {
 	UserIDs []int64 `json:"user_ids"`
 }
 
+// UpdateConversationRequest is the body of PUT /api/conversations/{id}.
+// Pointer fields let the caller patch one column at a time —
+// `name: null` is "leave unchanged", `name: ""` is "clear the value".
+// DMs are rejected (no name/topic on DMs).
+type UpdateConversationRequest struct {
+	Name  *string `json:"name,omitempty"`
+	Topic *string `json:"topic,omitempty"`
+}
+
 // RoomView is the JSON projection used by GET /api/rooms — name,
 // topic, and a denormalised member count for the discovery list.
 // Full member lists go through ConversationView once a user joins.

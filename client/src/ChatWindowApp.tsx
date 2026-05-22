@@ -1058,6 +1058,19 @@ function MessageRow({
               {m.attachments.map((a) => (
                 <AttachmentRender key={a.id} a={a} session={session} />
               ))}
+              {m.attachments.length >= 2 && (
+                <a
+                  className="msg-save-all"
+                  href={`${session.serverUrl}/api/messages/${m.id}/attachments.zip?token=${encodeURIComponent(session.token)}`}
+                  title={`Download all ${m.attachments.length} attachments as a ZIP`}
+                  // Tauri's webview honors the `download` attribute, but
+                  // pointing it at the explicit zip filename keeps the
+                  // OS save-dialog suggestion sensible.
+                  download={`oreohouse-msg-${m.id}-attachments.zip`}
+                >
+                  ⬇ Save all ({m.attachments.length})
+                </a>
+              )}
             </div>
           )}
           {reactions.length > 0 && (
