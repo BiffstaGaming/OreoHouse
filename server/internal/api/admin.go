@@ -13,6 +13,7 @@ import (
 
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/proto"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/stats"
 )
 
 // maxAdminBodyBytes caps the size of any admin-API JSON body. The
@@ -22,12 +23,14 @@ const maxAdminBodyBytes = 1 << 10
 // AdminHandler serves /api/admin/* endpoints. Every route requires the
 // caller to be authenticated AND flagged as is_admin in the database.
 type AdminHandler struct {
-	svc *auth.Service
+	svc   *auth.Service
+	stats *stats.Service
 }
 
 // NewAdminHandler wraps an auth.Service with admin HTTP handlers.
-func NewAdminHandler(svc *auth.Service) *AdminHandler {
-	return &AdminHandler{svc: svc}
+// statsSvc may be nil for tests that don't exercise the dashboard.
+func NewAdminHandler(svc *auth.Service, statsSvc *stats.Service) *AdminHandler {
+	return &AdminHandler{svc: svc, stats: statsSvc}
 }
 
 // Mount registers the /api/admin/* routes behind requireAdmin.
@@ -37,7 +40,25 @@ func (h *AdminHandler) Mount(r chi.Router) {
 		r.Get("/api/admin/users", h.listUsers)
 		r.Post("/api/admin/users", h.createUser)
 		r.Put("/api/admin/users/{id}/password", h.setPassword)
+		r.Get("/api/admin/stats", h.stats_)
 	})
+}
+
+// stats_ handles GET /api/admin/stats — the dashboard payload.
+// Underscored because Go's net/http "stats" isn't a thing but we
+// already have a field named stats on the receiver.
+func (h *AdminHandler) stats_(w http.ResponseWriter, r *http.Request) {
+	if h.stats == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "stats service not wired")
+		return
+	}
+	snap, err := h.stats.Snapshot(r.Context())
+	if err != nil {
+		slog.Error("admin: stats snapshot failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 // listUsers handles GET /api/admin/users.

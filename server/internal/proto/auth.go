@@ -4,9 +4,15 @@
 package proto
 
 // LoginRequest is the body of POST /api/auth/login.
+//
+// ClientVersion is optional and free-form — the server stores it on
+// the session row so the admin dashboard can display "alice — last
+// seen via web 0.18.1". Conventional values look like
+// "desktop 0.18.1" or "web 0.18.1".
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	ClientVersion string `json:"client_version,omitempty"`
 }
 
 // LoginResponse is returned on a successful POST /api/auth/login.

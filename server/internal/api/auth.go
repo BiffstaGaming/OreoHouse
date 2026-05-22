@@ -65,7 +65,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	sess, err := h.svc.CreateSession(r.Context(), user.ID)
+	sess, err := h.svc.CreateSessionWithVersion(r.Context(), user.ID, req.ClientVersion)
 	if err != nil {
 		slog.Error("login: create session failed", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")

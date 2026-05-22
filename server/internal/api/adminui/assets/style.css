@@ -252,4 +252,43 @@ dialog menu {
   tbody tr:hover {
     background: #2c3650;
   }
+  .stat-tile {
+    background: #2c3650;
+    border-color: #3a4768;
+  }
 }
+
+/* Stats overview grid (dashboard top card). Auto-fills columns
+ * so the layout adapts to the admin's window width. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin: 0.5rem 0 0.4rem;
+}
+.stat-tile {
+  background: #f6f8fc;
+  border: 1px solid #e2e6ee;
+  border-radius: 0.45rem;
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.stat-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #5e6c84;
+}
+.stat-hint {
+  font-size: 0.74rem;
+  color: #5e6c84;
+  margin-top: 0.15rem;
+}
+.muted.small { font-size: 0.78rem; }

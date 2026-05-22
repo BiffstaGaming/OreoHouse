@@ -239,7 +239,11 @@ function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
     setError(null);
     setBusy(true);
     try {
-      const resp = await login(serverUrl, { username, password });
+      const resp = await login(serverUrl, {
+        username,
+        password,
+        client_version: "desktop " + APP_VERSION,
+      });
       setPassword("");
       onSession({ serverUrl, token: resp.token, user: resp.user });
     } catch (err) {

@@ -15,7 +15,14 @@ require_once __DIR__ . '/config.php';
 function oreo_api_login(string $username, string $password): array
 {
     $url = oreo_server_url() . '/api/auth/login';
-    $body = json_encode(['username' => $username, 'password' => $password], JSON_THROW_ON_ERROR);
+    // Tag the session row with our build so the admin dashboard can
+    // show "alice — last seen via web 0.18.1". OREO_VERSION is the
+    // constant in config.php, kept in sync with client/package.json.
+    $body = json_encode([
+        'username'       => $username,
+        'password'       => $password,
+        'client_version' => 'web ' . OREO_VERSION,
+    ], JSON_THROW_ON_ERROR);
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
