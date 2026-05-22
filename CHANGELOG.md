@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.18.0...v0.18.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **desktop:** Save-all click + drag-drop in Tauri webview ([d337203](https://github.com/BiffstaGaming/OreoHouse/commit/d3372037ef6128467935ac0eb0624c8859ab3591))
+* **desktop:** Save-all click + drag-drop in Tauri webview ([73aaa22](https://github.com/BiffstaGaming/OreoHouse/commit/73aaa220d8621b49c33646d2fc95710d6ad70e25))
+
 ## [0.18.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.17.0...v0.18.0) (2026-05-22)
 
 
