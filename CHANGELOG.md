@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.2...v0.21.0) (2026-05-22)
+
+
+### Features
+
+* **client:** periodic update check (hourly + on focus) ([031a0b3](https://github.com/BiffstaGaming/OreoHouse/commit/031a0b3ffa1d8bb62ed9a912b55868ebb506c0de))
+* **client:** periodic update check (hourly + on focus) ([206c36c](https://github.com/BiffstaGaming/OreoHouse/commit/206c36c03ee4966a717eb2ca261cd5232ae9cc9f))
+
 ## [0.20.2](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.1...v0.20.2) (2026-05-22)
 
 
