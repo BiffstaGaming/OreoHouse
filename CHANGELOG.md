@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.18.1...v0.19.0) (2026-05-22)
+
+
+### Features
+
+* admin dashboard — overview tiles + per-user activity + client version ([f2e3d4e](https://github.com/BiffstaGaming/OreoHouse/commit/f2e3d4e5b61045420e512d96637b3b919c4ca3cf))
+* admin dashboard — overview tiles + per-user activity + client version ([7119f7f](https://github.com/BiffstaGaming/OreoHouse/commit/7119f7f939ce4480349f863c53b636993d122028))
+
 ## [0.18.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.18.0...v0.18.1) (2026-05-22)
 
 
