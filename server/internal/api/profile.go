@@ -70,12 +70,43 @@ func (h *ProfileHandler) Mount(r chi.Router) {
 		r.Put("/api/me/profile", h.setProfile)
 		r.Post("/api/me/avatar", h.uploadAvatar)
 		r.Delete("/api/me/avatar", h.deleteAvatar)
+		// Public roster — every signed-in user can see who's in the
+		// family. Required so the contact list can show people you
+		// haven't DM'd yet (offline + never-chatted users were
+		// previously invisible because nothing else seeded them).
+		r.Get("/api/users", h.listUsers)
 	})
 	r.Group(func(r chi.Router) {
 		// Avatar fetch accepts ?token= so <img src> can render directly.
 		r.Use(requireAuthHeaderOrQuery(h.auth))
 		r.Get("/api/users/{id}/avatar", h.getAvatar)
 	})
+}
+
+// listUsers handles GET /api/users — every user in the system, with
+// just the fields the client needs to render a contact row. Returns
+// the caller too (clients filter themselves out by id). Deliberately
+// narrower than /api/admin/users so this isn't a back-door into
+// admin-only fields like IsAdmin or LastSeenAt.
+func (h *ProfileHandler) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.auth.ListUsers(r.Context())
+	if err != nil {
+		slog.Error("profile: list users failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]proto.UserInfo, 0, len(users))
+	for _, u := range users {
+		out = append(out, proto.UserInfo{
+			ID:            u.ID,
+			Username:      u.Username,
+			CreatedAt:     u.CreatedAt.UTC().Format(time.RFC3339),
+			DisplayName:   u.DisplayName,
+			HasAvatar:     u.AvatarAttachmentID != 0,
+			AvatarVersion: u.AvatarAttachmentID,
+		})
+	}
+	writeJSON(w, http.StatusOK, proto.ListUsersResponse{Users: out})
 }
 
 // setProfile handles PUT /api/me/profile.

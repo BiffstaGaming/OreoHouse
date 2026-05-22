@@ -178,6 +178,19 @@
             const u = state.users.get(uid);
             if (u) startableUsers.push(u);
         });
+        // Family roster: everyone else we've ever heard about who isn't
+        // already in Online (above) or DMs. Hydrated by API.listUsers()
+        // in boot(), so this includes offline family members you've
+        // never DM'd — previously invisible.
+        const onlineIDs = new Set();
+        state.online.forEach(function (_, uid) { onlineIDs.add(uid); });
+        const familyOthers = [];
+        state.users.forEach(function (u) {
+            if (!u || u.id === state.me.id) return;
+            if (dmPartnerIDs.has(u.id)) return;
+            if (onlineIDs.has(u.id)) return;
+            familyOthers.push(u);
+        });
 
         if (dms.length > 0) {
             sb.appendChild(sectionHeader('Direct messages'));
@@ -186,6 +199,14 @@
         if (startableUsers.length > 0) {
             sb.appendChild(sectionHeader('Online'));
             startableUsers.sort(function (a, b) {
+                return UI.displayLabel(a).localeCompare(UI.displayLabel(b));
+            }).forEach(function (u) {
+                sb.appendChild(startDMRow(u));
+            });
+        }
+        if (familyOthers.length > 0) {
+            sb.appendChild(sectionHeader('Family'));
+            familyOthers.sort(function (a, b) {
                 return UI.displayLabel(a).localeCompare(UI.displayLabel(b));
             }).forEach(function (u) {
                 sb.appendChild(startDMRow(u));
@@ -2707,6 +2728,15 @@
             });
         } catch (e) {
             console.error('conversations load failed', e);
+        }
+        // Fetch the full family roster so the sidebar can show people
+        // you haven't DM'd yet. Without this, an offline family member
+        // you've never chatted with is invisible everywhere.
+        try {
+            const allUsers = await API.listUsers();
+            allUsers.forEach(upsertUser);
+        } catch (e) {
+            console.warn('users load failed', e);
         }
         renderSidebar();
         connect();

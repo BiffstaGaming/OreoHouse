@@ -93,6 +93,21 @@ export async function listConversations(
   return body.conversations;
 }
 
+// listUsers GETs /api/users — the public family roster. Backs the
+// contact list's "Family" section so users you haven't DM'd (and
+// who aren't currently online) are still discoverable.
+export async function listUsers(
+  serverUrl: string,
+  token: string,
+): Promise<UserInfo[]> {
+  const body = await getJSON<{ users: UserInfo[] }>(
+    serverUrl,
+    token,
+    "/api/users",
+  );
+  return body.users ?? [];
+}
+
 // createDM POSTs /api/conversations/dm. Idempotent on the server — if
 // a DM with the same user already exists, the existing conversation
 // is returned.
