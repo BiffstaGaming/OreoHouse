@@ -20,6 +20,8 @@ $bootstrap = [
     'serverUrl' => $browserServerUrl,
     'token' => $token,
     'user' => $user,
+    'version' => OREO_VERSION,
+    'repoUrl' => OREO_REPO_URL,
 ];
 
 ?>

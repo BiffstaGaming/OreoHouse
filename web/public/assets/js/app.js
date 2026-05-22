@@ -92,6 +92,7 @@
             UI.el('div', { class: 'topbar-brand' }, [
                 UI.el('img', { class: 'topbar-icon', src: '/assets/img/icon.png', alt: '' }),
                 UI.el('span', { text: 'OreoHouse' }),
+                UI.el('span', { id: 'topbar-unread', class: 'topbar-unread' }),
             ]),
             UI.el('div', { class: 'topbar-spacer' }),
             UI.el('button', {
@@ -110,7 +111,11 @@
                 wrapAvatar(state.me, 28),
                 UI.el('span', { class: 'self-label', text: UI.displayLabel(state.me) }),
             ]),
-            UI.el('a', { class: 'topbar-link', href: '/logout.php', text: 'Sign out' }),
+            UI.el('button', {
+                class: 'topbar-icon-btn',
+                title: 'Menu',
+                onclick: function (ev) { openSettingsMenu(ev.currentTarget); },
+            }, '⚙️'),
         ]);
 
         const sidebar = UI.el('aside', { class: 'sidebar', id: 'sidebar' });
@@ -379,15 +384,16 @@
                         onclick: function () { openAddMembersModal(convID); },
                     }, '➕')
                     : null,
-                conv.type !== 'dm'
-                    ? UI.el('button', {
-                        class: 'composer-icon-btn composer-icon-danger',
-                        title: 'Leave ' + convDisplayName(conv),
-                        onclick: function () {
-                            if (confirm('Leave ' + convDisplayName(conv) + '?')) leaveCurrentConversation(convID);
-                        },
-                    }, '🚪')
-                    : null,
+                UI.el('button', {
+                    class: 'composer-icon-btn',
+                    title: 'Search in this conversation (Ctrl/Cmd+F)',
+                    onclick: function () { openSearchModal(convID); },
+                }, '🔎'),
+                UI.el('button', {
+                    class: 'composer-icon-btn',
+                    title: 'More actions',
+                    onclick: function (ev) { openConvActionsMenu(convID, ev.currentTarget); },
+                }, '⋯'),
             ]),
         ]);
 
@@ -747,6 +753,14 @@
         async function submit() {
             // Expand slash commands before send. /dice /coin etc.
             let body = H.expandSlashCommand(textArea.value.trim());
+
+            // /help short-circuits: pop the local cheat-sheet modal
+            // instead of sending the literal sentinel to the conv.
+            if (body === H.HELP_SENTINEL) {
+                textArea.value = '';
+                openSlashHelpModal();
+                return;
+            }
 
             // Editing: send WS edit, NOT a new message.
             if (state.editingMessage) {
@@ -1170,13 +1184,19 @@
 
     // ---- search modal ----------------------------------------------
 
-    function openSearchModal() {
+    function openSearchModal(scopeConvID) {
         document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        // When scopeConvID is set (Ctrl+F), search only inside that
+        // conversation and show its name in the placeholder.
+        const scopedConv = scopeConvID ? state.conversations.get(scopeConvID) : null;
+        const placeholder = scopedConv
+            ? ('Search in "' + convDisplayName(scopedConv) + '"…')
+            : 'Type at least one word…';
 
         const input = UI.el('input', {
             class: 'search-input',
             type: 'search',
-            placeholder: 'Type at least one word…',
+            placeholder: placeholder,
             autocomplete: 'off',
             spellcheck: 'false',
         });
@@ -1192,7 +1212,9 @@
             status.textContent = 'Searching…';
             timer = window.setTimeout(async function () {
                 try {
-                    const rows = await API.searchMessages(q);
+                    const rows = scopeConvID
+                        ? await API.searchInConversation(scopeConvID, q)
+                        : await API.searchMessages(q);
                     renderResults(rows, q);
                 } catch (e) {
                     status.textContent = 'Search failed: ' + e.message;
@@ -1245,7 +1267,7 @@
 
         const card = UI.el('div', { class: 'modal search-modal' }, [
             UI.el('h2', {}, [
-                UI.el('span', { text: 'Search messages' }),
+                UI.el('span', { text: scopedConv ? 'Search in "' + convDisplayName(scopedConv) + '"' : 'Search messages' }),
                 UI.el('button', {
                     class: 'search-modal-close',
                     onclick: function () { backdrop.remove(); },
@@ -1518,6 +1540,12 @@
                     state.unread.set(m.conversation_id, (state.unread.get(m.conversation_id) || 0) + 1);
                     H.playMessageBlip();
                     updateTitleBadge();
+                    // Trigger an OS notification + ask permission the
+                    // first time we'd want to. The Notifications API
+                    // bails silently on browsers/permissions that
+                    // don't support it.
+                    maybeAskNotifications();
+                    pushNotification(m);
                 }
                 renderSidebar();
             }
@@ -1773,15 +1801,219 @@
         if (state.currentConvID) renderMain();
     }
 
-    // ---- title bar unread badge ------------------------------------
+    // ---- unread surfaces (title, topbar badge, favicon) ------------
 
     function updateTitleBadge() {
         let total = 0;
         state.unread.forEach(function (n) { total += n; });
         document.title = (total > 0 ? '(' + total + ') ' : '') + 'OreoHouse';
+        const badge = document.getElementById('topbar-unread');
+        if (badge) {
+            badge.textContent = total > 0 ? String(total) : '';
+            badge.style.display = total > 0 ? '' : 'none';
+        }
+        updateFavicon(total);
+    }
+
+    // Canvas-generated favicon. Draws the cookie icon plus a small red
+    // bubble with the count when total > 0. Cached as a base64 data
+    // URL so we only repaint when the count actually changes.
+    let _faviconBaseImg = null;
+    let _lastFaviconCount = -1;
+    function updateFavicon(total) {
+        if (total === _lastFaviconCount) return;
+        _lastFaviconCount = total;
+        const draw = function (baseImg) {
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 64;
+            const ctx = c.getContext('2d');
+            if (baseImg) {
+                ctx.drawImage(baseImg, 0, 0, 64, 64);
+            } else {
+                ctx.fillStyle = '#2c5dab';
+                ctx.fillRect(0, 0, 64, 64);
+            }
+            if (total > 0) {
+                ctx.beginPath();
+                ctx.arc(46, 18, 18, 0, Math.PI * 2);
+                ctx.fillStyle = '#dc2626';
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(total > 99 ? '99+' : String(total), 46, 19);
+            }
+            let link = document.querySelector('link[rel="icon"]');
+            if (!link) {
+                link = document.createElement('link');
+                link.rel = 'icon';
+                document.head.appendChild(link);
+            }
+            link.href = c.toDataURL('image/png');
+        };
+        if (_faviconBaseImg) { draw(_faviconBaseImg); return; }
+        const img = new Image();
+        img.onload = function () { _faviconBaseImg = img; draw(img); };
+        img.onerror = function () { draw(null); };
+        img.src = '/assets/img/icon.png';
     }
 
     setInterval(updateTitleBadge, 1000);
+
+    // ---- Browser Notifications API --------------------------------
+    //
+    // Asks permission on the first incoming message we'd want to
+    // notify about, then fires a desktop notification when a message
+    // arrives in a non-focused tab (or a different conversation).
+    // Click the notification → focus the tab + open the conv.
+
+    let _notifPermissionAsked = false;
+    function maybeAskNotifications() {
+        if (_notifPermissionAsked) return;
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'default') return;
+        _notifPermissionAsked = true;
+        try { Notification.requestPermission(); } catch (_) { /* ignore */ }
+    }
+    function pushNotification(m) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        if (document.visibilityState === 'visible' && m.conversation_id === state.currentConvID) return;
+        const sender = state.users.get(m.sender.id) || m.sender;
+        const conv = state.conversations.get(m.conversation_id);
+        const title = UI.displayLabel(sender) + (conv && conv.type !== 'dm' ? ' in ' + convDisplayName(conv) : '');
+        const body = m.body
+            ? (m.body.length > 140 ? m.body.slice(0, 139) + '…' : m.body)
+            : ((m.attachments && m.attachments.length > 0) ? '📎 ' + m.attachments[0].filename : '');
+        try {
+            const n = new Notification(title, {
+                body: body,
+                icon: '/assets/img/icon.png',
+                tag: 'oreo-conv-' + m.conversation_id,
+            });
+            n.onclick = function () {
+                window.focus();
+                openConversation(m.conversation_id);
+                n.close();
+            };
+        } catch (_) { /* iOS Safari etc */ }
+    }
+
+    // ---- Settings menu (⚙️ dropdown) ------------------------------
+
+    function openSettingsMenu(anchor) {
+        document.querySelectorAll('.settings-menu').forEach(function (n) { n.remove(); });
+        const menu = UI.el('div', { class: 'settings-menu' });
+        function item(label, onclick) {
+            return UI.el('button', {
+                class: 'settings-menu-item',
+                onclick: function () { menu.remove(); onclick(); },
+            }, label);
+        }
+        menu.appendChild(item('⚙️ Preferences', openPreferencesModal));
+        menu.appendChild(item('ℹ️ About OreoHouse', openAboutModal));
+        menu.appendChild(item('⌨️ Keyboard shortcuts', openShortcutsModal));
+        menu.appendChild(item('💡 Slash commands', openSlashHelpModal));
+        menu.appendChild(item('🔄 Check for updates', openUpdateModal));
+        const repoUrl = (window.OREO && window.OREO.repoUrl) || 'https://github.com/BiffstaGaming/OreoHouse';
+        menu.appendChild(UI.el('a', {
+            class: 'settings-menu-item',
+            href: repoUrl,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            onclick: function () { menu.remove(); },
+        }, '🐙 View on GitHub'));
+        menu.appendChild(UI.el('div', { class: 'settings-menu-sep' }));
+        menu.appendChild(UI.el('a', {
+            class: 'settings-menu-item settings-menu-danger',
+            href: '/logout.php',
+        }, '🚪 Sign out'));
+
+        document.body.appendChild(menu);
+        const r = anchor.getBoundingClientRect();
+        menu.style.right = (window.innerWidth - r.right) + 'px';
+        menu.style.top = (r.bottom + 4) + 'px';
+        setTimeout(function () {
+            document.addEventListener('click', function close(ev) {
+                if (!menu.contains(ev.target) && ev.target !== anchor) {
+                    menu.remove();
+                    document.removeEventListener('click', close, true);
+                }
+            }, true);
+        }, 0);
+    }
+
+    function openAboutModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const version = (window.OREO && window.OREO.version) || 'dev';
+        const repoUrl = (window.OREO && window.OREO.repoUrl) || 'https://github.com/BiffstaGaming/OreoHouse';
+        const card = UI.el('div', { class: 'modal about-modal' }, [
+            UI.el('img', { class: 'about-logo', src: '/assets/img/logo.png', alt: 'OreoHouse' }),
+            UI.el('h2', { text: 'OreoHouse' }),
+            UI.el('p', { class: 'about-version', text: 'Web client — version ' + version }),
+            UI.el('p', { class: 'about-blurb', text: 'Self-hosted family LAN messenger. Same accounts and conversations as the desktop app, just without the install.' }),
+            UI.el('div', { class: 'about-links' }, [
+                UI.el('a', { href: repoUrl, target: '_blank', rel: 'noopener noreferrer', text: 'GitHub' }),
+                UI.el('a', { href: repoUrl + '/releases', target: '_blank', rel: 'noopener noreferrer', text: 'Release notes' }),
+                UI.el('a', { href: repoUrl + '/issues', target: '_blank', rel: 'noopener noreferrer', text: 'Report a bug' }),
+            ]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    function openShortcutsModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const isMac = /Mac|iPad|iPhone/i.test(navigator.platform);
+        const cmd = isMac ? '⌘' : 'Ctrl';
+        const rows = [
+            [cmd + ' + K',     'Open search'],
+            ['Enter',          'Send message'],
+            ['Shift + Enter',  'Insert newline in composer'],
+            ['Esc',            'Cancel reply / edit / close modal'],
+            ['Click avatar',   'Open your profile + theme picker'],
+            ['Click 📌',        'View pinned messages in this conversation'],
+            ['Click 🖼️',        'View media + links in this conversation'],
+            ['Click 🔔 / 🔕',   'Toggle this conversation\'s mute'],
+            ['Click 🔊 / 🔇',   'Toggle all sounds'],
+        ];
+        const list = UI.el('table', { class: 'shortcuts-table' });
+        rows.forEach(function (r) {
+            list.appendChild(UI.el('tr', {}, [
+                UI.el('td', { class: 'shortcut-key' }, [UI.el('kbd', { text: r[0] })]),
+                UI.el('td', { class: 'shortcut-desc', text: r[1] }),
+            ]));
+        });
+        const card = UI.el('div', { class: 'modal shortcuts-modal' }, [
+            UI.el('h2', { text: 'Keyboard shortcuts' }),
+            list,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    function openUpdateModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const version = (window.OREO && window.OREO.version) || 'dev';
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Check for updates' }),
+            UI.el('p', { text: 'Currently running version ' + version + '.' }),
+            UI.el('p', { text: 'The web client always fetches the latest code on refresh — your admin pushes an update by pulling the new Docker image. Click Reload to get the latest now.' }),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Close' }),
+                UI.el('button', { class: 'primary', onclick: function () { window.location.reload(); }, text: 'Reload' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
 
     // ---- conversation creation + management modals -----------------
 
@@ -2067,6 +2299,349 @@
             state.historyLoading.delete(convID);
         }
     }
+
+    // ---- /help cheat-sheet modal -----------------------------------
+
+    function openSlashHelpModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const rows = (H.SLASH_HELP_ROWS || []);
+        const list = UI.el('table', { class: 'shortcuts-table' });
+        rows.forEach(function (r) {
+            const keys = r.slice(0, r.length - 1).join(' / ');
+            list.appendChild(UI.el('tr', {}, [
+                UI.el('td', { class: 'shortcut-key' }, [UI.el('kbd', { text: keys })]),
+                UI.el('td', { class: 'shortcut-desc', text: r[r.length - 1] }),
+            ]));
+        });
+        const card = UI.el('div', { class: 'modal shortcuts-modal' }, [
+            UI.el('h2', { text: 'Slash commands' }),
+            UI.el('p', { class: 'about-blurb', text: 'Type one of these in the composer. /me, /shrug, /tableflip, /unflip, /dice, /coin, /8ball, /time all expand to text. /help shows this list and is never sent.' }),
+            list,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    // ---- Preferences modal -----------------------------------------
+    //
+    // Pulls theme picking out of the Profile modal and adds master sound
+    // + notification controls so all per-machine UX prefs live in one
+    // place. Profile stays just display-name + avatar.
+
+    function openPreferencesModal() {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+
+        const currentTheme = loadTheme();
+
+        // Theme picker (same shape as in the old profile modal).
+        const themeOptions = UI.el('div', { class: 'theme-options' });
+        function rebuildThemeRows(selected) {
+            themeOptions.innerHTML = '';
+            THEMES.forEach(function (t) {
+                const isActive = t.name === selected;
+                themeOptions.appendChild(UI.el('label', {
+                    class: 'theme-option' + (isActive ? ' theme-option-active' : ''),
+                    onclick: function () {
+                        applyTheme(t.name);
+                        saveTheme(t.name);
+                        rebuildThemeRows(t.name);
+                    },
+                }, [
+                    UI.el('input', { type: 'radio', name: 'oreohouse-theme', value: t.name, checked: isActive }),
+                    UI.el('span', { class: 'theme-swatch theme-swatch-' + t.name }),
+                    UI.el('span', { class: 'theme-meta' }, [
+                        UI.el('span', { class: 'theme-label', text: t.label }),
+                        UI.el('span', { class: 'theme-tagline', text: t.tagline }),
+                    ]),
+                ]));
+            });
+        }
+        rebuildThemeRows(currentTheme);
+
+        // Sound mute checkbox bound to state.soundsMuted.
+        const soundsRow = UI.el('label', { class: 'prefs-toggle' }, [
+            UI.el('input', {
+                type: 'checkbox',
+                checked: !state.soundsMuted,
+                onchange: function (ev) {
+                    state.soundsMuted = !ev.target.checked;
+                    H.saveSoundsMuted(state.soundsMuted);
+                    // Sync the topbar 🔊/🔇 button + title.
+                    const btn = document.getElementById('topbar-sound');
+                    if (btn) {
+                        btn.textContent = state.soundsMuted ? '🔇' : '🔊';
+                        btn.title = state.soundsMuted ? 'Sounds muted (click to unmute)' : 'Sounds on (click to mute)';
+                    }
+                },
+            }),
+            UI.el('span', {}, [
+                UI.el('strong', { text: 'Sound effects' }),
+                UI.el('br'),
+                UI.el('span', { class: 'prefs-toggle-help', text: 'Message blips, nudges, sign-in chimes, reaction pops.' }),
+            ]),
+        ]);
+
+        // Notification permission. Browsers gate this behind a user
+        // gesture, so we trigger it from the button click.
+        const notifLabel = ('Notification' in window)
+            ? (Notification.permission === 'granted' ? 'Granted'
+                : Notification.permission === 'denied' ? 'Blocked (change in browser settings)'
+                : 'Not yet requested')
+            : 'Not supported in this browser';
+        const notifBtn = UI.el('button', {
+            disabled: !('Notification' in window) || Notification.permission !== 'default',
+            onclick: function () {
+                if (!('Notification' in window)) return;
+                Notification.requestPermission().then(function () { backdrop.remove(); openPreferencesModal(); });
+            },
+            text: ('Notification' in window) && Notification.permission === 'default' ? 'Enable' : 'OK',
+        });
+        const notifRow = UI.el('div', { class: 'prefs-toggle' }, [
+            UI.el('span', {}, [
+                UI.el('strong', { text: 'Desktop notifications' }),
+                UI.el('br'),
+                UI.el('span', { class: 'prefs-toggle-help', text: 'OS-level toast on incoming messages when the tab is unfocused. Status: ' + notifLabel + '.' }),
+            ]),
+            notifBtn,
+        ]);
+
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Preferences' }),
+            UI.el('fieldset', { class: 'theme-picker' }, [
+                UI.el('legend', { text: 'Theme' }),
+                themeOptions,
+            ]),
+            UI.el('fieldset', { class: 'theme-picker' }, [
+                UI.el('legend', { text: 'Sounds & notifications' }),
+                soundsRow,
+                notifRow,
+            ]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    // ---- Conversation actions menu (3-dot in chat header) ----------
+
+    function openConvActionsMenu(convID, anchor) {
+        document.querySelectorAll('.settings-menu').forEach(function (n) { n.remove(); });
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        const menu = UI.el('div', { class: 'settings-menu' });
+        function item(label, onclick) {
+            return UI.el('button', { class: 'settings-menu-item', onclick: function () { menu.remove(); onclick(); } }, label);
+        }
+        if (conv.type !== 'dm') {
+            menu.appendChild(item('✏️ Rename conversation', function () { openRenameModal(convID); }));
+            menu.appendChild(item('💬 Change topic',         function () { openTopicModal(convID); }));
+            menu.appendChild(item('👥 Manage members',       function () { openManageMembersModal(convID); }));
+            menu.appendChild(UI.el('div', { class: 'settings-menu-sep' }));
+        }
+        menu.appendChild(item('💾 Export conversation', function () { exportConversation(convID); }));
+        if (conv.type !== 'dm') {
+            menu.appendChild(UI.el('div', { class: 'settings-menu-sep' }));
+            menu.appendChild(UI.el('button', {
+                class: 'settings-menu-item settings-menu-danger',
+                onclick: function () {
+                    menu.remove();
+                    if (confirm('Leave ' + convDisplayName(conv) + '?')) leaveCurrentConversation(convID);
+                },
+            }, '🚪 Leave conversation'));
+        }
+        document.body.appendChild(menu);
+        const r = anchor.getBoundingClientRect();
+        menu.style.right = (window.innerWidth - r.right) + 'px';
+        menu.style.top = (r.bottom + 4) + 'px';
+        setTimeout(function () {
+            document.addEventListener('click', function close(ev) {
+                if (!menu.contains(ev.target) && ev.target !== anchor) {
+                    menu.remove();
+                    document.removeEventListener('click', close, true);
+                }
+            }, true);
+        }, 0);
+    }
+
+    function openRenameModal(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        const input = UI.el('input', { type: 'text', value: conv.name || '', placeholder: 'Conversation name' });
+        async function save() {
+            try {
+                const updated = await API.updateConversation(convID, { name: input.value.trim() });
+                state.conversations.set(updated.id, updated);
+                if (state.currentConvID === convID) renderMain();
+                renderSidebar();
+                backdrop.remove();
+            } catch (e) { alert('Rename failed: ' + e.message); }
+        }
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Rename conversation' }),
+            UI.el('label', {}, [UI.el('span', { text: 'New name' }), input]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { class: 'primary', onclick: save, text: 'Save' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+        setTimeout(function () { input.focus(); input.select(); }, 0);
+    }
+
+    function openTopicModal(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        const input = UI.el('input', { type: 'text', value: conv.topic || '', placeholder: 'Topic (or leave empty to clear)' });
+        async function save() {
+            try {
+                const updated = await API.updateConversation(convID, { topic: input.value.trim() });
+                state.conversations.set(updated.id, updated);
+                if (state.currentConvID === convID) renderMain();
+                renderSidebar();
+                backdrop.remove();
+            } catch (e) { alert('Update failed: ' + e.message); }
+        }
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Change topic' }),
+            UI.el('label', {}, [UI.el('span', { text: 'Topic' }), input]),
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { onclick: function () { backdrop.remove(); }, text: 'Cancel' }),
+                UI.el('button', { class: 'primary', onclick: save, text: 'Save' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+        setTimeout(function () { input.focus(); }, 0);
+    }
+
+    function openManageMembersModal(convID) {
+        document.querySelectorAll('.modal-backdrop').forEach(function (n) { n.remove(); });
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        const list = UI.el('ul', { class: 'manage-members-list' });
+        conv.members.forEach(function (m) {
+            const isMe = m.id === state.me.id;
+            list.appendChild(UI.el('li', { class: 'manage-members-row' }, [
+                UI.el('span', { class: 'manage-members-name', text: UI.displayLabel(m) + (isMe ? ' (you)' : '') }),
+                isMe
+                    ? null
+                    : UI.el('button', {
+                        class: 'danger',
+                        onclick: async function () {
+                            if (!confirm('Remove ' + UI.displayLabel(m) + ' from ' + convDisplayName(conv) + '?')) return;
+                            try {
+                                await API.kickMember(convID, m.id);
+                                // Optimistic; conversation_members_changed will catch up.
+                                backdrop.remove();
+                            } catch (e) { alert('Remove failed: ' + e.message); }
+                        },
+                        text: 'Remove',
+                    }),
+            ]));
+        });
+        const card = UI.el('div', { class: 'modal' }, [
+            UI.el('h2', { text: 'Members' }),
+            list,
+            UI.el('div', { class: 'modal-actions' }, [
+                UI.el('div', { class: 'composer-spacer' }),
+                UI.el('button', { class: 'primary', onclick: function () { backdrop.remove(); }, text: 'Close' }),
+            ]),
+        ]);
+        const backdrop = makeBackdrop(card);
+    }
+
+    // ---- Export conversation ---------------------------------------
+
+    async function exportConversation(convID) {
+        const conv = state.conversations.get(convID);
+        if (!conv) return;
+        // Fetch all messages by walking the same before-cursor used by
+        // scroll-to-load-older.
+        const all = [];
+        let before = null;
+        for (let page = 0; page < 200; page++) {
+            try {
+                const resp = await API.listMessages(convID, before, 100);
+                const rows = resp.messages || [];
+                if (rows.length === 0) break;
+                all.push(...rows);
+                before = rows[rows.length - 1].id;
+                if (rows.length < 100) break;
+            } catch (e) {
+                alert('Export failed: ' + e.message);
+                return;
+            }
+        }
+        // Server returns newest-first; flip so the export reads top-to-bottom.
+        all.reverse();
+
+        // Build a plain-text + JSON export. Plain text is the friendly
+        // download; JSON is for machine consumption.
+        const label = convDisplayName(conv).replace(/[^\w\-]+/g, '_') || ('conv-' + convID);
+        const now = new Date();
+        const stamp = now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0');
+
+        const lines = [];
+        lines.push('# ' + convDisplayName(conv));
+        if (conv.topic) lines.push('Topic: ' + conv.topic);
+        lines.push('Exported: ' + now.toLocaleString());
+        lines.push('Members: ' + conv.members.map(UI.displayLabel).join(', '));
+        lines.push('');
+        all.forEach(function (m) {
+            const sender = state.users.get(m.sender.id) || m.sender;
+            const ts = new Date(m.created_at);
+            const head = '[' + ts.toLocaleString() + '] ' + UI.displayLabel(sender) + (m.edited_at ? ' (edited)' : '') + ':';
+            if (m.deleted_at) {
+                lines.push(head + ' (this message was deleted)');
+            } else if (m.body) {
+                lines.push(head + ' ' + m.body);
+            }
+            if (m.attachments && m.attachments.length > 0) {
+                m.attachments.forEach(function (a) {
+                    lines.push('    📎 ' + a.filename + ' (' + a.mime_type + ', ' + a.size_bytes + ' bytes)');
+                });
+            }
+        });
+        const txtBlob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+        triggerDownload(txtBlob, 'oreohouse-' + label + '-' + stamp + '.txt');
+
+        const jsonBlob = new Blob([JSON.stringify({
+            conversation: conv,
+            exported_at: now.toISOString(),
+            messages: all,
+        }, null, 2)], { type: 'application/json;charset=utf-8' });
+        triggerDownload(jsonBlob, 'oreohouse-' + label + '-' + stamp + '.json');
+    }
+
+    function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    // ---- Ctrl/Cmd+F — search inside current conversation -----------
+
+    document.addEventListener('keydown', function (ev) {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f' && state.currentConvID) {
+            ev.preventDefault();
+            openSearchModal(state.currentConvID);
+        }
+    });
 
     // ---- boot ------------------------------------------------------
 

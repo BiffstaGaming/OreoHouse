@@ -78,6 +78,8 @@ func (h *ConversationsHandler) Mount(r chi.Router) {
 		r.Post("/api/conversations/group", h.createGroup)
 		r.Post("/api/conversations/room", h.createRoom)
 		r.Post("/api/conversations/{id}/members", h.addMembers)
+		r.Delete("/api/conversations/{id}/members/{userID}", h.kickMember)
+		r.Put("/api/conversations/{id}", h.updateConversation)
 		r.Post("/api/conversations/{id}/leave", h.leave)
 		r.Get("/api/conversations/{id}/messages", h.listMessages)
 		r.Get("/api/conversations/{id}/pins", h.listPins)
@@ -602,6 +604,131 @@ func (h *ConversationsHandler) addMembers(w http.ResponseWriter, r *http.Request
 	h.pushMembersChanged(view, oldUsers)
 
 	writeJSON(w, http.StatusOK, view)
+}
+
+// updateConversation handles PUT /api/conversations/{id}. Rename a
+// group / room, or change a room's topic. DMs reject. Caller must be
+// a member. Empty string clears the column (back to NULL).
+func (h *ConversationsHandler) updateConversation(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	conv, err := h.convs.Get(r.Context(), convID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err != nil {
+		slog.Error("updateConversation get failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if conv.Type == conversations.TypeDM {
+		writeJSONError(w, http.StatusBadRequest, "cannot rename a DM")
+		return
+	}
+	if err := h.requireMembership(w, r, conv.ID, me.ID); err != nil {
+		return
+	}
+	var req proto.UpdateConversationRequest
+	if err := decodeConvJSON(r.Body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == nil && req.Topic == nil {
+		writeJSONError(w, http.StatusBadRequest, "nothing to update")
+		return
+	}
+	// Light validation — caps to keep wire sizes sane.
+	if req.Name != nil && len(*req.Name) > 128 {
+		writeJSONError(w, http.StatusBadRequest, "name too long (max 128)")
+		return
+	}
+	if req.Topic != nil && len(*req.Topic) > 256 {
+		writeJSONError(w, http.StatusBadRequest, "topic too long (max 256)")
+		return
+	}
+	if err := h.convs.UpdateNameTopic(r.Context(), conv.ID, req.Name, req.Topic); err != nil {
+		slog.Error("UpdateNameTopic failed", "error", err, "conv_id", conv.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Re-fetch + broadcast so every member sees the new name/topic.
+	updated, err := h.convs.Get(r.Context(), conv.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	views, err := h.toViews(r, []conversations.Conversation{updated})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	view := views[0]
+	h.pushMembersChanged(view, memberIDs(view))
+	writeJSON(w, http.StatusOK, view)
+}
+
+// kickMember handles DELETE /api/conversations/{id}/members/{userID}.
+// Removes another member from a group/room. Caller must be a member.
+// You can't kick yourself — use POST /leave for that. DMs reject.
+func (h *ConversationsHandler) kickMember(w http.ResponseWriter, r *http.Request) {
+	me, _ := UserFromContext(r.Context())
+	convID, ok := parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	userID, ok := parseIDParam(w, r, "userID")
+	if !ok {
+		return
+	}
+	conv, err := h.convs.Get(r.Context(), convID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		writeJSONError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err != nil {
+		slog.Error("kickMember get failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if conv.Type == conversations.TypeDM {
+		writeJSONError(w, http.StatusBadRequest, "cannot remove members from a DM")
+		return
+	}
+	if userID == me.ID {
+		writeJSONError(w, http.StatusBadRequest, "use POST /leave to remove yourself")
+		return
+	}
+	// Caller must be a member of the conversation.
+	if err := h.requireMembership(w, r, conv.ID, me.ID); err != nil {
+		return
+	}
+	// Target must also currently be a member; 404 otherwise.
+	targetIsMember, err := h.convs.IsMember(r.Context(), conv.ID, userID)
+	if err != nil {
+		slog.Error("kickMember membership check failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !targetIsMember {
+		writeJSONError(w, http.StatusNotFound, "that user isn't in this conversation")
+		return
+	}
+	if err := h.convs.RemoveMember(r.Context(), conv.ID, userID); err != nil {
+		slog.Error("RemoveMember failed", "error", err, "conv_id", conv.ID)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Broadcast the new member list so every connected client refreshes.
+	views, err := h.toViews(r, []conversations.Conversation{conv})
+	if err == nil {
+		view := views[0]
+		h.pushMembersChanged(view, memberIDs(view))
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // leave handles POST /api/conversations/{id}/leave. DMs can't be left.
