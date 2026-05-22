@@ -16,6 +16,7 @@ import {
 
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { fileURL, uploadFile } from "./lib/api";
 import { playMessageBlip, playNudge } from "./lib/sounds";
@@ -1063,10 +1064,18 @@ function MessageRow({
                   className="msg-save-all"
                   href={`${session.serverUrl}/api/messages/${m.id}/attachments.zip?token=${encodeURIComponent(session.token)}`}
                   title={`Download all ${m.attachments.length} attachments as a ZIP`}
-                  // Tauri's webview honors the `download` attribute, but
-                  // pointing it at the explicit zip filename keeps the
-                  // OS save-dialog suggestion sensible.
-                  download={`oreohouse-msg-${m.id}-attachments.zip`}
+                  // Tauri's webview swallows the click on <a download> —
+                  // the user only gets the file via right-click → Save
+                  // link as. Intercept and route through openUrl() so
+                  // the system browser handles the download natively.
+                  // Right-click still works as a fallback for whatever
+                  // reason this might fail.
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void openUrl(
+                      `${session.serverUrl}/api/messages/${m.id}/attachments.zip?token=${encodeURIComponent(session.token)}`,
+                    );
+                  }}
                 >
                   ⬇ Save all ({m.attachments.length})
                 </a>
@@ -1306,7 +1315,19 @@ function AttachmentRender({
     );
   }
   return (
-    <a className="msg-file" href={url} download={a.filename} title={a.filename}>
+    <a
+      className="msg-file"
+      href={url}
+      download={a.filename}
+      title={a.filename}
+      // Same Tauri-webview workaround as the "Save all" pill — a
+      // bare <a download> click is swallowed by the webview. Route
+      // through openUrl so the OS download flow kicks in.
+      onClick={(e) => {
+        e.preventDefault();
+        void openUrl(url);
+      }}
+    >
       <span className="msg-file-icon">📎</span>
       <span className="msg-file-name">{a.filename}</span>
       <span className="msg-file-size">{formatBytes(a.size_bytes)}</span>
