@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.22.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.3...v0.22.0) (2026-05-22)
+
+
+### Features
+
+* **client/api:** add updateConversation, kickMember, searchInConversation ([def4a3e](https://github.com/BiffstaGaming/OreoHouse/commit/def4a3eb786c1b69b840e61dbb6029c7ce9f3f15))
+* **client/drafts:** per-conversation composer draft persistence ([763c257](https://github.com/BiffstaGaming/OreoHouse/commit/763c257d3e3b4d9d1882ed89cb5aa0f5c4a290ac))
+* **client:** /help slash command opens cheat-sheet modal ([c81264b](https://github.com/BiffstaGaming/OreoHouse/commit/c81264bdc27e19e49f6cdabba4a3eef3546e43ff))
+* **client:** ConvActionsMenu — rename / topic / manage members / export / leave ([80690ab](https://github.com/BiffstaGaming/OreoHouse/commit/80690ab2bad9c5cf4e5ceeca06e644e3a2a531ce))
+* **client:** PreferencesModal consolidates theme + sounds ([d44756f](https://github.com/BiffstaGaming/OreoHouse/commit/d44756f0ada927607bd69e326ebf6fb0fe0fa2af))
+* **client:** SearchModal supports scoped (in-conversation) search ([214718f](https://github.com/BiffstaGaming/OreoHouse/commit/214718f1ad1fba9e423eadf2e5fe0093e5b161af))
+* **client:** wire ConvActionsMenu, Ctrl+F, Ctrl+K, /help, drafts, Preferences ([5d3996b](https://github.com/BiffstaGaming/OreoHouse/commit/5d3996b85334218a18ad4a7d8df20e9feaf10ac1))
+* close desktop drift + message drafts + responsive PWA web client ([39bdb69](https://github.com/BiffstaGaming/OreoHouse/commit/39bdb692a5faf59d9481113eb15978ecda27ac27))
+* **web:** PWA manifest + service worker ([e04e0c0](https://github.com/BiffstaGaming/OreoHouse/commit/e04e0c0e0ec1323ca9f8f928a1548ada54684a84))
+* **web:** responsive layout for phone widths + composer draft persistence ([1348173](https://github.com/BiffstaGaming/OreoHouse/commit/13481738d85b2fa5d0040e64a42cd1b08f6fc990))
+
 ## [0.21.3](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.2...v0.21.3) (2026-05-22)
 
 

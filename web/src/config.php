@@ -12,7 +12,7 @@ declare(strict_types=1);
  * generic file updater (see release-please-config.json) to rewrite
  * the literal on every release PR — don't bump it by hand.
  */
-const OREO_VERSION = '0.21.3'; // x-release-please-version
+const OREO_VERSION = '0.22.0'; // x-release-please-version
 
 const OREO_REPO_URL = 'https://github.com/BiffstaGaming/OreoHouse';
 
