@@ -45,8 +45,12 @@ import {
   type UserUpdatedPayload,
 } from "./lib/chatBridge";
 import { Avatar } from "./components/Avatar";
+import { ConvActionsMenu } from "./components/ConvActionsMenu";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { MediaLinksPanel } from "./components/MediaLinksPanel";
+import { SearchModal } from "./components/SearchModal";
+import { SlashHelpModal } from "./components/SlashHelpModal";
+import { clearDraft, loadDraft, saveDraft } from "./lib/drafts";
 import { QUICK_REACTIONS } from "./lib/emoji";
 import { expandSlashCommand } from "./lib/slashCommands";
 import { displayNameOf } from "./lib/users";
@@ -491,11 +495,22 @@ function ChatBody({
   convMuted: boolean;
   pinned: Set<number>;
 }) {
-  const [draft, setDraft] = useState("");
+  // Restore any unsent draft for this conversation on first paint.
+  // Drafts persist across chat-window close so a half-typed message
+  // survives an accidental window close. Cleared after a successful
+  // send via trySend.
+  const [draft, setDraft] = useState<string>(() => loadDraft(convID));
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [nudgeCooldown, setNudgeCooldown] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [mediaPanelOpen, setMediaPanelOpen] = useState(false);
+  // Cross-window UI state — owned here because each chat window is
+  // a separate webview.
+  const [convMenuOpen, setConvMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [slashHelpOpen, setSlashHelpOpen] = useState(false);
+  const convMenuAnchorRef = useRef<HTMLButtonElement | null>(null);
+
   // Editing state: when non-null, the composer replaces "send" with
   // "save edit" and operates on this message id instead of creating
   // a new one.
@@ -507,6 +522,28 @@ function ChatBody({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const lastTypingSentAt = useRef(0);
+
+  // Persist the draft on every change. saveDraft trims to 8 kB and
+  // is a noop for the empty string (clears the row). We pause while
+  // editing so the edit-target body doesn't overwrite the legit
+  // draft — the user's pre-edit text waits in localStorage until
+  // they cancel or finish the edit.
+  useEffect(() => {
+    if (editing) return;
+    saveDraft(convID, draft);
+  }, [draft, convID, editing]);
+
+  // Ctrl/Cmd+F opens an in-conversation search scoped to this conv.
+  useEffect(() => {
+    function onKey(ev: globalThis.KeyboardEvent) {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "f") {
+        ev.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const sendReact = useCallback(
     (messageID: number, emoji: string) => {
@@ -747,22 +784,37 @@ function ChatBody({
     if (editing) {
       if (!body) return;
       // Re-run slash expansion on edits too so users can /shrug a
-      // typo-fix into shape.
-      body = expandSlashCommand(body).body;
+      // typo-fix into shape. /help short-circuits the same as in
+      // the normal send path.
+      const exp = expandSlashCommand(body);
+      if (exp.showHelp) {
+        setSlashHelpOpen(true);
+        return;
+      }
+      body = exp.body;
       sendEditOut(editing.id, body);
       cancelEdit();
       return;
     }
     if (!body && readyIDs.length === 0) return;
-    // Slash commands run before the network hop. Unrecognised ones
-    // pass through unchanged (handled=false).
-    if (body) body = expandSlashCommand(body).body;
+    // Slash commands run before the network hop. /help opens the
+    // cheat-sheet modal instead of sending text. Unrecognised
+    // commands pass through unchanged (handled=false).
+    if (body) {
+      const exp = expandSlashCommand(body);
+      if (exp.showHelp) {
+        setSlashHelpOpen(true);
+        return;
+      }
+      body = exp.body;
+    }
     sendOut(
       body,
       readyIDs.length > 0 ? readyIDs : undefined,
       replyTarget?.id,
     );
     setDraft("");
+    clearDraft(convID);
     setPending((p) => p.filter((x) => x.kind === "uploading"));
     setReplyTarget(null);
   }
@@ -830,23 +882,43 @@ function ChatBody({
           >
             👋
           </button>
-          {conv.type !== "dm" && (
-            <button
-              type="button"
-              className="chat-window-button danger"
-              title={`Leave ${title}`}
-              onClick={async () => {
-                const yes = await ask(`Leave ${title}?`, {
-                  title: "Leave conversation",
-                  kind: "warning",
-                });
-                if (yes) sendLeave();
-              }}
-            >
-              Leave
-            </button>
-          )}
+          {/* 3-dot menu: Rename / Topic / Manage members / Export /
+              Leave. Items are conditionally shown based on conv.type
+              inside ConvActionsMenu. Replaces the standalone Leave
+              button (Leave now lives inside the menu). */}
+          <button
+            ref={convMenuAnchorRef}
+            type="button"
+            className="chat-window-button"
+            title="Conversation actions"
+            onClick={() => setConvMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={convMenuOpen}
+          >
+            ⋯
+          </button>
         </div>
+        <ConvActionsMenu
+          open={convMenuOpen}
+          conv={conv}
+          self={session.user}
+          serverUrl={session.serverUrl}
+          token={session.token}
+          anchorRef={convMenuAnchorRef}
+          onClose={() => setConvMenuOpen(false)}
+          onConversationUpdated={() => {
+            // Server broadcasts conversation_updated → main fires
+            // EVT.ConvUpdated → our parent listener refreshes `conv`.
+            // No optimistic update needed; the round-trip is fast.
+          }}
+          onLeave={async () => {
+            const yes = await ask(`Leave ${title}?`, {
+              title: "Leave conversation",
+              kind: "warning",
+            });
+            if (yes) sendLeave();
+          }}
+        />
       </header>
 
       <div className="chat-thread" ref={scrollRef} onScroll={onThreadScroll} onLoadCapture={(e) => {
@@ -1010,6 +1082,24 @@ function ChatBody({
           userCache={userCache}
           onClose={() => setMediaPanelOpen(false)}
         />
+      )}
+      {searchOpen && (
+        // Ctrl+F → search scoped to this conversation. SearchModal
+        // only reads `conversations` for label rendering, so a
+        // one-entry map keyed by our conv id is enough.
+        <SearchModal
+          serverUrl={session.serverUrl}
+          token={session.token}
+          conversations={new Map([[convID, conv]])}
+          userCache={userCache}
+          self={session.user}
+          scopeConvID={convID}
+          onClose={() => setSearchOpen(false)}
+          onJump={() => setSearchOpen(false)}
+        />
+      )}
+      {slashHelpOpen && (
+        <SlashHelpModal onClose={() => setSlashHelpOpen(false)} />
       )}
     </main>
   );
