@@ -186,52 +186,86 @@ function humanBytes(n) {
 }
 
 function renderStats(snap) {
-  const grid = document.getElementById("stats-grid");
+  const root = document.getElementById("stats-root");
   const gen = document.getElementById("stats-generated");
-  if (!grid) return;
-  grid.innerHTML = "";
+  if (!root) return;
+  root.innerHTML = "";
   if (!snap) {
-    grid.textContent = "Stats unavailable.";
+    root.textContent = "Stats unavailable.";
     return;
   }
   const o = snap.overview || {};
-  // Each tile: { label, value, hint? }
-  const tiles = [
-    { label: "Users",      value: o.total_users },
-    { label: "Active 7d",  value: o.active_users_7d },
-    { label: "Active 30d", value: o.active_users_30d },
-    { label: "Messages",   value: o.total_messages, hint: (o.messages_7d || 0) + " in last 7d" },
-    { label: "Reactions",  value: o.total_reactions },
-    { label: "DMs",        value: o.dm_conversations },
-    { label: "Groups",     value: o.group_conversations },
-    { label: "Rooms",      value: o.room_conversations },
-    { label: "Files",      value: o.total_attachments,
-      hint: (o.image_attachments || 0) + " images / " + (o.other_attachments || 0) + " other" },
-    { label: "Storage",    value: humanBytes(o.total_upload_bytes || 0) },
-    { label: "Edited",     value: o.edited_messages },
-    { label: "Pinned",     value: o.pinned_messages },
-    { label: "Deleted",    value: o.deleted_messages },
-    { label: "Admins",     value: o.admin_users },
+
+  // Three semantic groups instead of one undifferentiated grid. Each
+  // section has its own muted heading + its own grid row so the eye
+  // doesn't have to parse 14 unrelated tiles in sequence.
+  const sections = [
+    {
+      title: "Activity",
+      tiles: [
+        { label: "Users",      value: o.total_users },
+        { label: "Active 7d",  value: o.active_users_7d },
+        { label: "Active 30d", value: o.active_users_30d },
+        { label: "Admins",     value: o.admin_users },
+      ],
+    },
+    {
+      title: "Messages",
+      tiles: [
+        { label: "Total",     value: o.total_messages, hint: (o.messages_7d || 0) + " in last 7d" },
+        { label: "Reactions", value: o.total_reactions },
+        { label: "Edited",    value: o.edited_messages },
+        { label: "Deleted",   value: o.deleted_messages },
+        { label: "Pinned",    value: o.pinned_messages },
+      ],
+    },
+    {
+      title: "Conversations & media",
+      tiles: [
+        { label: "DMs",     value: o.dm_conversations },
+        { label: "Groups",  value: o.group_conversations },
+        { label: "Rooms",   value: o.room_conversations },
+        { label: "Files",   value: o.total_attachments,
+          hint: (o.image_attachments || 0) + " images, " + (o.other_attachments || 0) + " other" },
+        { label: "Storage", value: humanBytes(o.total_upload_bytes || 0) },
+      ],
+    },
   ];
-  for (const t of tiles) {
-    const card = document.createElement("div");
-    card.className = "stat-tile";
-    const v = document.createElement("div");
-    v.className = "stat-value";
-    v.textContent = String(t.value ?? "0");
-    const l = document.createElement("div");
-    l.className = "stat-label";
-    l.textContent = t.label;
-    card.appendChild(v);
-    card.appendChild(l);
-    if (t.hint) {
-      const h = document.createElement("div");
-      h.className = "stat-hint";
-      h.textContent = t.hint;
-      card.appendChild(h);
+
+  for (const section of sections) {
+    const wrap = document.createElement("div");
+    wrap.className = "stats-section";
+
+    const h = document.createElement("h3");
+    h.className = "stats-section-title";
+    h.textContent = section.title;
+    wrap.appendChild(h);
+
+    const grid = document.createElement("div");
+    grid.className = "stats-grid";
+    for (const t of section.tiles) {
+      const card = document.createElement("div");
+      card.className = "stat-tile";
+      const v = document.createElement("div");
+      v.className = "stat-value";
+      v.textContent = String(t.value ?? "0");
+      const l = document.createElement("div");
+      l.className = "stat-label";
+      l.textContent = t.label;
+      card.appendChild(v);
+      card.appendChild(l);
+      if (t.hint) {
+        const hint = document.createElement("div");
+        hint.className = "stat-hint";
+        hint.textContent = t.hint;
+        card.appendChild(hint);
+      }
+      grid.appendChild(card);
     }
-    grid.appendChild(card);
+    wrap.appendChild(grid);
+    root.appendChild(wrap);
   }
+
   if (gen && snap.generated_at) {
     gen.textContent = "Snapshot generated " + fmtDate(snap.generated_at);
   }
@@ -248,8 +282,8 @@ function renderUsers(users, stats) {
   for (const u of users) {
     const tr = document.createElement("tr");
 
-    tr.appendChild(td(String(u.id)));
-    tr.appendChild(td(u.username));
+    tr.appendChild(td(String(u.id), "num"));
+    tr.appendChild(td(u.username, "username"));
 
     const adminCell = document.createElement("td");
     const badge = document.createElement("span");
@@ -258,22 +292,25 @@ function renderUsers(users, stats) {
     adminCell.appendChild(badge);
     tr.appendChild(adminCell);
 
-    tr.appendChild(td(fmtDate(u.created_at)));
-    tr.appendChild(td(fmtDate(u.last_seen_at)));
+    tr.appendChild(td(fmtDateShort(u.created_at), "date"));
+    tr.appendChild(td(fmtDateShort(u.last_seen_at), "date"));
 
     // Per-user activity columns (sourced from /api/admin/stats).
     const s = byID.get(u.id) || {};
-    tr.appendChild(td(String(s.messages_sent ?? 0)));
-    tr.appendChild(td(String(s.attachments_uploaded ?? 0)));
-    tr.appendChild(td(humanBytes(s.bytes_uploaded ?? 0)));
-    tr.appendChild(td(String(s.reactions_given ?? 0)));
-    tr.appendChild(td(String(s.conversations_in ?? 0)));
-    tr.appendChild(td(s.latest_client_version || "—"));
+    tr.appendChild(td(String(s.messages_sent ?? 0), "num"));
+    tr.appendChild(td(String(s.attachments_uploaded ?? 0), "num"));
+    tr.appendChild(td(humanBytes(s.bytes_uploaded ?? 0), "num"));
+    tr.appendChild(td(String(s.reactions_given ?? 0), "num"));
+    tr.appendChild(td(String(s.conversations_in ?? 0), "num"));
+    tr.appendChild(td(s.latest_client_version || "—", "client"));
 
     const actions = document.createElement("td");
+    actions.className = "row-actions";
     const reset = document.createElement("button");
     reset.type = "button";
-    reset.textContent = "Reset password";
+    reset.className = "icon-btn";
+    reset.title = "Reset " + u.username + "'s password";
+    reset.textContent = "🔑 Reset";
     reset.addEventListener("click", () => openResetModal(u));
     actions.appendChild(reset);
     tr.appendChild(actions);
@@ -282,8 +319,22 @@ function renderUsers(users, stats) {
   }
 }
 
-function td(text) {
+// fmtDateShort renders an ISO timestamp as "DD MMM, HH:mm" — about
+// half the width of toLocaleString("default", { ... }) and reads
+// better in the dense user table.
+function fmtDateShort(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return d.getDate() + " " + months[d.getMonth()] + ", " +
+         String(d.getHours()).padStart(2, "0") + ":" +
+         String(d.getMinutes()).padStart(2, "0");
+}
+
+function td(text, cls) {
   const cell = document.createElement("td");
+  if (cls) cell.className = cls;
   cell.textContent = text;
   return cell;
 }

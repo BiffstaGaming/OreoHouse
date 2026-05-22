@@ -37,10 +37,12 @@
 
       <!-- Dashboard -->
       <section id="dashboard" hidden>
-        <div class="card">
-          <h2>Overview</h2>
-          <p class="muted">Aggregate counts only — no message content is ever surfaced here.</p>
-          <div class="stats-grid" id="stats-grid"></div>
+        <div class="card overview-card">
+          <header class="card-head">
+            <h2>Overview</h2>
+            <p class="muted small">Aggregate counts only — no message content is ever surfaced here.</p>
+          </header>
+          <div id="stats-root"></div>
           <p class="muted small" id="stats-generated"></p>
         </div>
 
