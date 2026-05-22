@@ -1631,6 +1631,25 @@ button:disabled {
   font-size: 0.72rem;
 }
 
+/* "Save all" link rendered when a message has 2+ attachments. Sits
+ * inline at the end of the .msg-attachments row, so the recipient
+ * can grab the whole batch as a ZIP rather than right-click each. */
+.msg-save-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.55rem;
+  background: rgba(74, 141, 232, 0.14);
+  border: 1px solid rgba(74, 141, 232, 0.4);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--msn-text);
+  align-self: center;
+}
+.msg-save-all:hover { background: rgba(74, 141, 232, 0.25); }
+
 /* --- Modals --- */
 
 .modal-overlay {

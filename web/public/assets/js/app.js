@@ -524,6 +524,17 @@
                     ]));
                 }
             });
+            // 2+ attachments → "Save all as ZIP" link, so the user doesn't
+            // have to right-click → Save link as on each one. Server
+            // streams /api/messages/{id}/attachments.zip; the browser
+            // does the rest.
+            if (m.attachments.length >= 2) {
+                wrap.appendChild(UI.el('a', {
+                    class: 'msg-save-all',
+                    href: API.messageAttachmentsZipURL(m.id),
+                    title: 'Download all ' + m.attachments.length + ' attachments as a ZIP',
+                }, '⬇ Save all (' + m.attachments.length + ')'));
+            }
             bubble.appendChild(wrap);
         }
 

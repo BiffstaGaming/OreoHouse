@@ -131,6 +131,13 @@
         return global.OREO.serverUrl + '/api/files/' + attachmentID + '?token=' + t;
     }
 
+    // URL for /api/messages/{id}/attachments.zip — the "Save all"
+    // bundle. Browser triggers a single download; the server streams.
+    function messageAttachmentsZipURL(messageID) {
+        const t = encodeURIComponent(global.OREO.token);
+        return global.OREO.serverUrl + '/api/messages/' + messageID + '/attachments.zip?token=' + t;
+    }
+
     // --- search + media/links ------------------------------------------
 
     async function searchMessages(query) {
@@ -210,6 +217,7 @@
         avatarURL: avatarURL,
         uploadFile: uploadFile,
         fileURL: fileURL,
+        messageAttachmentsZipURL: messageAttachmentsZipURL,
         searchMessages: searchMessages,
         listConversationMedia: listConversationMedia,
         listConversationLinks: listConversationLinks,

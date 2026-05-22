@@ -1313,6 +1313,25 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
 .msg-deleted { font-style: italic; opacity: 0.7; }
 .msg-pinned-badge { font-size: 0.75rem; opacity: 0.85; margin-left: 0.2rem; }
 
+/* "Save all" link rendered when a message has 2+ attachments. Sits
+ * inline at the end of the .msg-attachments row so users can grab
+ * the whole bundle without right-clicking each file. */
+.msg-save-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.55rem;
+    background: rgba(74,141,232,.14);
+    border: 1px solid rgba(74,141,232,.4);
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--msn-text);
+    align-self: center;
+}
+.msg-save-all:hover { background: rgba(74,141,232,.25); }
+
 .msg-ticks {
     display: inline-flex;
     align-items: center;
