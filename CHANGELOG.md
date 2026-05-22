@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.2](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.1...v0.21.2) (2026-05-22)
+
+
+### Bug Fixes
+
+* **web:** teach release-please to bump web/src/config.php ([63f0ea1](https://github.com/BiffstaGaming/OreoHouse/commit/63f0ea11b1f39c7ceeb93d63bc35aaf62baab7ec))
+* **web:** teach release-please to bump web/src/config.php ([e1266b0](https://github.com/BiffstaGaming/OreoHouse/commit/e1266b006cba5d757ba42dc52a42fb1eac87e989))
+
 ## [0.21.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.0...v0.21.1) (2026-05-22)
 
 
