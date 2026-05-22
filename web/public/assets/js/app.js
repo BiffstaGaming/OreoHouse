@@ -304,6 +304,9 @@
     async function openConversation(convID) {
         state.currentConvID = convID;
         state.unread.set(convID, 0);
+        // Mobile layout switches sidebar ↔ main on this attribute.
+        // Wide screens ignore it (both panes always visible).
+        document.body.dataset.convOpen = '1';
         // Drop any reply/edit composer state lingering from the previous
         // conversation — UX would be confusing otherwise.
         state.replyTarget = null;
@@ -338,6 +341,16 @@
         markCurrentRead();
     }
 
+    function closeConversation() {
+        // Used by the mobile back button and (eventually) sign-out.
+        // Clears the active conv so the sidebar pane is shown again
+        // on narrow viewports.
+        state.currentConvID = null;
+        delete document.body.dataset.convOpen;
+        renderSidebar();
+        renderMain();
+    }
+
     function renderMain() {
         const main = document.getElementById('main');
         if (!main) return;
@@ -356,6 +369,13 @@
 
         const isConvMuted = state.mutedConvs.has(convID);
         const header = UI.el('div', { class: 'chat-header' }, [
+            // Mobile-only "back" button to return to the contact list.
+            // Hidden by CSS on wide screens where both panes are visible.
+            UI.el('button', {
+                class: 'chat-back',
+                title: 'Back to conversations',
+                onclick: function () { closeConversation(); },
+            }, '‹'),
             UI.el('div', { class: 'chat-title' }, [
                 UI.el('span', { class: 'chat-name', text: convDisplayName(conv) }),
                 conv.topic ? UI.el('span', { class: 'chat-topic', text: conv.topic }) : null,
@@ -664,12 +684,32 @@
 
         const contextBar = UI.el('div', { class: 'composer-context-bar', id: 'composer-context-bar' });
         const pendingBar = UI.el('div', { class: 'composer-pending', id: 'composer-pending' });
+        // Restore any unsent draft for this conversation so closing
+        // and reopening a chat doesn't throw away half-typed text.
+        // Per-conv key; cleared after a successful send.
+        const DRAFT_KEY = 'oreohouse:draft:' + conv.id;
+        const DRAFT_MAX = 8 * 1024;
+        function loadDraft() {
+            try { return localStorage.getItem(DRAFT_KEY) || ''; } catch (_) { return ''; }
+        }
+        function saveDraft(v) {
+            try {
+                if (!v) { localStorage.removeItem(DRAFT_KEY); return; }
+                localStorage.setItem(DRAFT_KEY, v.length > DRAFT_MAX ? v.slice(0, DRAFT_MAX) : v);
+            } catch (_) { /* full / blocked — degrade silently */ }
+        }
         const textArea = UI.el('textarea', {
             class: 'composer-input',
             rows: '2',
             placeholder: 'Write a message — Enter to send, Shift+Enter for newline',
+            value: loadDraft(),
             oninput: function () {
                 if (!state.editingMessage) state.ws.sendTyping(conv.id);
+                // Don't persist while editing — would overwrite the
+                // legit draft with the edit target's body. The draft
+                // is whatever the user had typed before they started
+                // editing.
+                if (!state.editingMessage) saveDraft(textArea.value);
             },
             onkeydown: function (ev) {
                 if (ev.key === 'Escape' && (state.replyTarget || state.editingMessage)) {
@@ -792,6 +832,7 @@
             const replyToID = state.replyTarget ? state.replyTarget.id : 0;
             state.ws.sendMessage(conv.id, body, ids, replyToID);
             textArea.value = '';
+            saveDraft('');
             pending.length = 0;
             state.replyTarget = null;
             repaintPending();
