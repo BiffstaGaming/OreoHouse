@@ -149,12 +149,22 @@ els.loginForm.addEventListener("submit", async (ev) => {
 async function loadDashboard() {
   clearMsg(els.usersError, els.addError, els.addSuccess);
   try {
-    const data = await api("GET", "/api/admin/users");
-    renderUsers(data.users || []);
+    // Fetch users + stats in parallel — both are independent and the
+    // stats endpoint also returns per-user numbers we'll merge in.
+    const [users, stats] = await Promise.all([
+      api("GET", "/api/admin/users"),
+      api("GET", "/api/admin/stats").catch(function (err) {
+        // Stats are best-effort decoration; auth/db errors propagate
+        // via the users call.
+        console.warn("stats failed:", err);
+        return null;
+      }),
+    ]);
+    renderStats(stats);
+    renderUsers(users.users || [], stats);
     showScreen("dashboard");
   } catch (err) {
     if (err.status === 401 || err.status === 403) {
-      // Either no session or not an admin — boot to login.
       setToken("", "");
       showScreen("login");
       if (err.status === 403) {
@@ -167,7 +177,73 @@ async function loadDashboard() {
   }
 }
 
-function renderUsers(users) {
+function humanBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n.toFixed(0) : n.toFixed(1)) + " " + units[i];
+}
+
+function renderStats(snap) {
+  const grid = document.getElementById("stats-grid");
+  const gen = document.getElementById("stats-generated");
+  if (!grid) return;
+  grid.innerHTML = "";
+  if (!snap) {
+    grid.textContent = "Stats unavailable.";
+    return;
+  }
+  const o = snap.overview || {};
+  // Each tile: { label, value, hint? }
+  const tiles = [
+    { label: "Users",      value: o.total_users },
+    { label: "Active 7d",  value: o.active_users_7d },
+    { label: "Active 30d", value: o.active_users_30d },
+    { label: "Messages",   value: o.total_messages, hint: (o.messages_7d || 0) + " in last 7d" },
+    { label: "Reactions",  value: o.total_reactions },
+    { label: "DMs",        value: o.dm_conversations },
+    { label: "Groups",     value: o.group_conversations },
+    { label: "Rooms",      value: o.room_conversations },
+    { label: "Files",      value: o.total_attachments,
+      hint: (o.image_attachments || 0) + " images / " + (o.other_attachments || 0) + " other" },
+    { label: "Storage",    value: humanBytes(o.total_upload_bytes || 0) },
+    { label: "Edited",     value: o.edited_messages },
+    { label: "Pinned",     value: o.pinned_messages },
+    { label: "Deleted",    value: o.deleted_messages },
+    { label: "Admins",     value: o.admin_users },
+  ];
+  for (const t of tiles) {
+    const card = document.createElement("div");
+    card.className = "stat-tile";
+    const v = document.createElement("div");
+    v.className = "stat-value";
+    v.textContent = String(t.value ?? "0");
+    const l = document.createElement("div");
+    l.className = "stat-label";
+    l.textContent = t.label;
+    card.appendChild(v);
+    card.appendChild(l);
+    if (t.hint) {
+      const h = document.createElement("div");
+      h.className = "stat-hint";
+      h.textContent = t.hint;
+      card.appendChild(h);
+    }
+    grid.appendChild(card);
+  }
+  if (gen && snap.generated_at) {
+    gen.textContent = "Snapshot generated " + fmtDate(snap.generated_at);
+  }
+}
+
+function renderUsers(users, stats) {
+  // Build a quick lookup of per-user stats by user id.
+  const byID = new Map();
+  if (stats && stats.per_user) {
+    for (const row of stats.per_user) byID.set(row.id, row);
+  }
+
   els.usersBody.innerHTML = "";
   for (const u of users) {
     const tr = document.createElement("tr");
@@ -184,6 +260,15 @@ function renderUsers(users) {
 
     tr.appendChild(td(fmtDate(u.created_at)));
     tr.appendChild(td(fmtDate(u.last_seen_at)));
+
+    // Per-user activity columns (sourced from /api/admin/stats).
+    const s = byID.get(u.id) || {};
+    tr.appendChild(td(String(s.messages_sent ?? 0)));
+    tr.appendChild(td(String(s.attachments_uploaded ?? 0)));
+    tr.appendChild(td(humanBytes(s.bytes_uploaded ?? 0)));
+    tr.appendChild(td(String(s.reactions_given ?? 0)));
+    tr.appendChild(td(String(s.conversations_in ?? 0)));
+    tr.appendChild(td(s.latest_client_version || "—"));
 
     const actions = document.createElement("td");
     const reset = document.createElement("button");

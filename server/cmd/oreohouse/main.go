@@ -29,6 +29,7 @@ import (
 	"github.com/BiffstaGaming/OreoHouse/server/internal/conversations"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/messages"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/stats"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/ws"
 )
 
@@ -103,7 +104,8 @@ func runServe(args []string) error {
 
 	hub := ws.NewHub()
 	authHandler := api.NewAuthHandler(authSvc)
-	adminHandler := api.NewAdminHandler(authSvc)
+	statsSvc := stats.NewService(sqlDB)
+	adminHandler := api.NewAdminHandler(authSvc, statsSvc)
 	profileHandler := api.NewProfileHandler(authSvc, attachmentsSvc, hub)
 	convsHandler := api.NewConversationsHandler(authSvc, convsSvc, msgsSvc, attachmentsSvc, hub)
 	filesHandler := api.NewFilesHandler(authSvc, attachmentsSvc, convsSvc, msgsSvc, int64(*maxUploadMB)*(1<<20))

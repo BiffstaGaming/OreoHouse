@@ -225,10 +225,21 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	return u, nil
 }
 
-// CreateSession inserts a new session for userID. ExpiresAt is set to
-// now+TTL when the service's TTL is positive, otherwise it's the zero
-// time and the session never expires.
+// CreateSession inserts a new session for userID with no client
+// version. Kept as a convenience for tests + callers that don't have
+// version info handy.
 func (s *Service) CreateSession(ctx context.Context, userID int64) (Session, error) {
+	return s.CreateSessionWithVersion(ctx, userID, "")
+}
+
+// CreateSessionWithVersion inserts a new session, recording the
+// reported client_version. ExpiresAt is set to now+TTL when the
+// service's TTL is positive, otherwise it's the zero time and the
+// session never expires. clientVersion is free-form ("desktop 0.18.1",
+// "web 0.18.1", etc) and may be empty.
+func (s *Service) CreateSessionWithVersion(
+	ctx context.Context, userID int64, clientVersion string,
+) (Session, error) {
 	token, err := newSessionToken()
 	if err != nil {
 		return Session{}, fmt.Errorf("generating session token: %w", err)
@@ -242,9 +253,19 @@ func (s *Service) CreateSession(ctx context.Context, userID int64) (Session, err
 		expiresAt = now.Add(s.sessionTTL)
 		expiresAtArg = formatTime(expiresAt)
 	}
+	var versionArg any
+	if clientVersion != "" {
+		// Cap the recorded value so a malicious or buggy client can't
+		// blow up the sessions table with a megabyte-long UA-style
+		// string. 64 chars is plenty for "desktop 0.18.1".
+		if len(clientVersion) > 64 {
+			clientVersion = clientVersion[:64]
+		}
+		versionArg = clientVersion
+	}
 	if _, err := s.db.ExecContext(ctx,
-		"INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-		token, userID, formatTime(now), expiresAtArg); err != nil {
+		"INSERT INTO sessions (token, user_id, created_at, expires_at, client_version) VALUES (?, ?, ?, ?, ?)",
+		token, userID, formatTime(now), expiresAtArg, versionArg); err != nil {
 		return Session{}, fmt.Errorf("inserting session: %w", err)
 	}
 	return Session{

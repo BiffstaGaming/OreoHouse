@@ -6,6 +6,10 @@
 export interface LoginRequest {
   username: string;
   password: string;
+  // Free-form client identifier the server stores on the session row
+  // so the admin dashboard can show "alice — last seen via desktop
+  // 0.18.1". Optional; absent for legacy / scripted callers.
+  client_version?: string;
 }
 
 export interface LoginResponse {

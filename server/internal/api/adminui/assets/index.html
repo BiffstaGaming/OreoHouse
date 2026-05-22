@@ -38,6 +38,13 @@
       <!-- Dashboard -->
       <section id="dashboard" hidden>
         <div class="card">
+          <h2>Overview</h2>
+          <p class="muted">Aggregate counts only — no message content is ever surfaced here.</p>
+          <div class="stats-grid" id="stats-grid"></div>
+          <p class="muted small" id="stats-generated"></p>
+        </div>
+
+        <div class="card">
           <h2>Users</h2>
           <table id="users-table">
             <thead>
@@ -47,6 +54,12 @@
                 <th>Admin</th>
                 <th>Created</th>
                 <th>Last seen</th>
+                <th>Messages</th>
+                <th>Files</th>
+                <th>Uploaded</th>
+                <th>Reactions</th>
+                <th>Convs</th>
+                <th>Last client</th>
                 <th></th>
               </tr>
             </thead>

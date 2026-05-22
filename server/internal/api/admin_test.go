@@ -16,6 +16,7 @@ import (
 	"github.com/BiffstaGaming/OreoHouse/server/internal/auth"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/db"
 	"github.com/BiffstaGaming/OreoHouse/server/internal/proto"
+	"github.com/BiffstaGaming/OreoHouse/server/internal/stats"
 )
 
 type adminStack struct {
@@ -37,7 +38,7 @@ func newAdminStack(t *testing.T) *adminStack {
 
 	svc := auth.NewService(d, 0)
 	r := chi.NewRouter()
-	NewAdminHandler(svc).Mount(r)
+	NewAdminHandler(svc, stats.NewService(d)).Mount(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return &adminStack{svc: svc, srv: srv}
