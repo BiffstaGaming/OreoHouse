@@ -87,6 +87,10 @@ import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import { Avatar } from "./components/Avatar";
 import { ProfileModal } from "./components/ProfileModal";
 import { SearchModal } from "./components/SearchModal";
+// package.json is the source of truth for our version — release-please
+// bumps it, so importing it here keeps the About modal + WS
+// client_version stamp in sync without a manual second update.
+import pkg from "../package.json";
 import type {
   ConversationView,
   MessageView,
@@ -2259,7 +2263,10 @@ function mergeByID(a: MessageView[], b: MessageView[]): MessageView[] {
 // ----------------------------------------------------------------------
 
 const REPO_URL = "https://github.com/BiffstaGaming/OreoHouse";
-const APP_VERSION = "0.16.1"; // synced manually with client/package.json
+// Pulled from package.json so release-please's version bump flows
+// through to the About modal + the WS client_version stamp without
+// anyone having to remember a second place to update.
+const APP_VERSION = pkg.version;
 
 function SettingsMenu({
   onClose,
