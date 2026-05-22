@@ -43,6 +43,13 @@
         return request('GET', '/api/conversations');
     }
 
+    // GET /api/users — the public family roster, used by renderSidebar
+    // to show people you haven't DM'd yet.
+    async function listUsers() {
+        const r = await request('GET', '/api/users');
+        return (r && r.users) || [];
+    }
+
     function listMessages(convID, before, limit) {
         const params = new URLSearchParams();
         if (before) params.set('before', String(before));
@@ -203,6 +210,7 @@
 
     global.OreoAPI = {
         listConversations: listConversations,
+        listUsers: listUsers,
         listMessages: listMessages,
         createDM: createDM,
         createGroup: createGroup,

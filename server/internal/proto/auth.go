@@ -52,3 +52,13 @@ type ErrorResponse struct {
 type SetProfileRequest struct {
 	DisplayName string `json:"display_name"`
 }
+
+// ListUsersResponse is the body of GET /api/users — the public
+// roster every signed-in user can read. Backs the "Family" section
+// of the contact list so users you haven't DM'd are still
+// discoverable (otherwise an offline family member you've never
+// chatted with is invisible). Deliberately narrower than the admin
+// list endpoint: no IsAdmin, no LastSeenAt.
+type ListUsersResponse struct {
+	Users []UserInfo `json:"users"`
+}

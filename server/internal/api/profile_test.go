@@ -120,6 +120,46 @@ func TestProfile_SetDisplayName(t *testing.T) {
 	}
 }
 
+func TestProfile_ListUsers(t *testing.T) {
+	s := newProfileStack(t)
+	_, aliceToken := s.seedUser(t, "alice")
+	s.seedUser(t, "bob")
+	s.seedUser(t, "carol")
+
+	resp := s.do(t, http.MethodGet, "/api/users", aliceToken, "", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var got proto.ListUsersResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Users) != 3 {
+		t.Fatalf("expected 3 users, got %d", len(got.Users))
+	}
+	// Should include the caller too — clients filter by id, server
+	// doesn't pre-filter so callers stay simple.
+	names := map[string]bool{}
+	for _, u := range got.Users {
+		names[u.Username] = true
+	}
+	for _, want := range []string{"alice", "bob", "carol"} {
+		if !names[want] {
+			t.Errorf("expected %q in list, missing", want)
+		}
+	}
+}
+
+func TestProfile_ListUsers_RequiresAuth(t *testing.T) {
+	s := newProfileStack(t)
+	resp := s.do(t, http.MethodGet, "/api/users", "", "", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
 func TestProfile_SetDisplayName_TooLong(t *testing.T) {
 	s := newProfileStack(t)
 	_, token := s.seedUser(t, "alice")

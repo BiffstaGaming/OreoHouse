@@ -28,6 +28,7 @@ import {
   listConversations,
   listMessages,
   listRooms,
+  listUsers,
   login,
   logout,
 } from "./lib/api";
@@ -354,6 +355,10 @@ function ChatScreen({
 }) {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [online, setOnline] = useState<PresenceInfo[]>([]);
+  // Every user in the system, hydrated once after login via
+  // GET /api/users. Used by ContactList to show family members you
+  // haven't DM'd. Kept fresh by user_profile_changed events.
+  const [allUsers, setAllUsers] = useState<UserInfo[]>([]);
   const [myState, setMyState] = useState<UserState>("online");
   const [myCustomText, setMyCustomText] = useState<string>("");
   const [conversations, setConversations] = useState<
@@ -541,10 +546,28 @@ function ChatScreen({
     }
   }, [session, onSignOut]);
 
+  // refreshAllUsers fetches the full family roster so the contact
+  // list can show offline / never-DM'd users. Without this, the only
+  // way to "discover" a user was to be online at the same time as
+  // them (presence) or already share a conversation. New family
+  // members created by the admin while you were offline were
+  // effectively invisible.
+  const refreshAllUsers = useCallback(async () => {
+    try {
+      const users = await listUsers(session.serverUrl, session.token);
+      setAllUsers(users);
+      for (const u of users) upsertUser(u);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      console.error("listUsers failed:", err);
+    }
+  }, [session, upsertUser]);
+
   // ---- WebSocket connect ------------------------------------------
 
   useEffect(() => {
     void refreshConversations();
+    void refreshAllUsers();
 
     let wsUrl: string;
     try {
@@ -1589,6 +1612,7 @@ function ChatScreen({
         conversations={conversations}
         unreadByConv={unreadByConv}
         userCache={userCache}
+        allUsers={allUsers}
         serverUrl={session.serverUrl}
         token={session.token}
         onPickUser={openChatWithUser}
@@ -1653,6 +1677,7 @@ function ContactList({
   conversations,
   unreadByConv,
   userCache,
+  allUsers,
   serverUrl,
   token,
   onPickUser,
@@ -1666,6 +1691,7 @@ function ContactList({
   conversations: Map<number, ConversationView>;
   unreadByConv: Map<number, number>;
   userCache: Map<number, UserInfo>;
+  allUsers: UserInfo[];
   serverUrl: string;
   token: string;
   onPickUser: (u: UserInfo) => void;
@@ -1697,6 +1723,15 @@ function ContactList({
   );
   const offlineContacts = sortByUsername(
     Array.from(dmContactMap.values()).filter((u) => !onlineIDs.has(u.id)),
+  );
+  // "Family" section = the rest of the roster: people you haven't
+  // DM'd and who aren't currently online. Without this, an offline
+  // family member you've never chatted with is invisible.
+  const knownIDs = new Set<number>([self.id]);
+  for (const p of onlineOthers) knownIDs.add(p.user.id);
+  for (const u of offlineContacts) knownIDs.add(u.id);
+  const familyOthers = sortByUsername(
+    allUsers.filter((u) => !knownIDs.has(u.id)),
   );
   const groupsAndRooms = sortConversations(
     Array.from(conversations.values()).filter((c) => c.type !== "dm"),
@@ -1746,6 +1781,27 @@ function ContactList({
                 user={enrich(u)}
                 state="offline"
                 unread={unreadForUser(u)}
+                serverUrl={serverUrl}
+                token={token}
+                onClick={() => onPickUser(u)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {familyOthers.length > 0 && (
+        <section>
+          <h2>
+            Family — <span className="count">{familyOthers.length}</span>
+          </h2>
+          <ul>
+            {familyOthers.map((u) => (
+              <ContactRow
+                key={u.id}
+                user={enrich(u)}
+                state="offline"
+                unread={0}
                 serverUrl={serverUrl}
                 token={token}
                 onClick={() => onPickUser(u)}
