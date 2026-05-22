@@ -396,9 +396,12 @@ button:disabled {
 }
 
 .dot-offline {
-  background: transparent;
-  border: 1px solid rgba(127, 127, 127, 0.55);
-  box-shadow: none;
+  /* Solid grey radial gradient matching the depth of the
+     online/away/busy dots so the offline state still reads as a
+     real indicator on both Aurora dark and Daylight backgrounds.
+     Previously transparent + hairline border which got lost on
+     dark themes and looked like a missing/empty placeholder. */
+  background: radial-gradient(circle at 30% 30%, #b8c2d6, #6c7280);
 }
 
 .contact-status-text {
