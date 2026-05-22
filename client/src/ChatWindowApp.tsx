@@ -17,6 +17,7 @@ import {
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 import { fileURL, uploadFile } from "./lib/api";
 import { playMessageBlip, playNudge } from "./lib/sounds";
@@ -579,10 +580,48 @@ function ChatBody({
     });
   }
 
+  // Scroll the thread to the bottom on mount and whenever the message
+  // list changes. The original "scrollTop = scrollHeight" version was
+  // racing with inline image loads: heights computed before the image
+  // bytes had arrived left the user a screen short of the latest msg.
+  // Now we re-scroll on every dependency change AND in a microtask
+  // afterwards (covers the layout pass), then keep re-scrolling on
+  // any image onLoad in the thread — but only if the user was already
+  // pinned to the bottom, so we don't yank them down while they're
+  // reading older messages.
+  const stickyBottomRef = useRef(true);
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }
+  function isNearBottom(): boolean {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - (el.scrollTop + el.clientHeight) < 80;
+  }
   useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!stickyBottomRef.current) return;
+    scrollToBottom();
+    // Second pass after the next paint — gives the layout engine a
+    // tick to settle anything that depended on freshly-attached DOM.
+    requestAnimationFrame(scrollToBottom);
+    // Third pass for content with intrinsic-size delays (typically
+    // images that loaded from cache between rAF and now).
+    const t = window.setTimeout(scrollToBottom, 120);
+    return () => window.clearTimeout(t);
   }, [messages]);
+  // Track whether the user is currently anchored to the bottom. Any
+  // scroll up moves us out of sticky mode; scrolling back down to
+  // within 80px re-arms it.
+  function onThreadScroll() {
+    stickyBottomRef.current = isNearBottom();
+  }
+  // Any image inside the thread that finishes loading after the
+  // initial scroll triggers a re-scroll, but only while sticky.
+  function onAnyImageLoad() {
+    if (stickyBottomRef.current) scrollToBottom();
+  }
 
   const sendOut = useCallback(
     (body: string, attachmentIDs?: number[], replyToID?: number) => {
@@ -796,8 +835,12 @@ function ChatBody({
               type="button"
               className="chat-window-button danger"
               title={`Leave ${title}`}
-              onClick={() => {
-                if (confirm(`Leave ${title}?`)) sendLeave();
+              onClick={async () => {
+                const yes = await ask(`Leave ${title}?`, {
+                  title: "Leave conversation",
+                  kind: "warning",
+                });
+                if (yes) sendLeave();
               }}
             >
               Leave
@@ -806,7 +849,11 @@ function ChatBody({
         </div>
       </header>
 
-      <div className="chat-thread" ref={scrollRef}>
+      <div className="chat-thread" ref={scrollRef} onScroll={onThreadScroll} onLoadCapture={(e) => {
+        // Bubble onLoad from any descendant <img> through one place.
+        const t = e.target as HTMLElement;
+        if (t && t.tagName === "IMG") onAnyImageLoad();
+      }}>
         {messages.length === 0 ? (
           <p className="empty">No messages yet — say hi.</p>
         ) : (
@@ -823,8 +870,12 @@ function ChatBody({
               onReact={(emoji) => sendReact(m.id, emoji)}
               onReply={() => startReply(m)}
               onEdit={() => startEdit(m)}
-              onDelete={() => {
-                if (confirm("Delete this message?")) sendDeleteOut(m.id);
+              onDelete={async () => {
+                const yes = await ask("Delete this message?", {
+                  title: "Delete message",
+                  kind: "warning",
+                });
+                if (yes) sendDeleteOut(m.id);
               }}
               onTogglePin={() => {
                 void emit(
