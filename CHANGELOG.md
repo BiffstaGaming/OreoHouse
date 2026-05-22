@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.17.0...v0.18.0) (2026-05-22)
+
+
+### Features
+
+* preferences modal, conv actions menu, in-conv search, export, /help ([17ced05](https://github.com/BiffstaGaming/OreoHouse/commit/17ced057164377e01f734f8efca8d547a03340b6))
+* Preferences modal, Conv actions menu, in-conv search, export, /help ([04290b3](https://github.com/BiffstaGaming/OreoHouse/commit/04290b3fdb25913a30352115714a4357001938a7))
+* Save all attachments as ZIP for multi-attachment messages ([8dc8017](https://github.com/BiffstaGaming/OreoHouse/commit/8dc801715d5a70c1b3e1d985ca57459796a9903f))
+
 ## [0.17.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.16.1...v0.17.0) (2026-05-21)
 
 
