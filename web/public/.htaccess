@@ -11,10 +11,21 @@ RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
-# Cache static assets for an hour.
-<FilesMatch "\.(css|js|png|jpg|svg|woff2?)$">
+# PWA manifest needs application/manifest+json so browsers will
+# parse it. Default httpd config tags .webmanifest as text/plain
+# which works but logs a console warning under strict installability
+# audits.
+AddType application/manifest+json .webmanifest
+
+# Cache static assets for an hour. Excludes sw.js so a redeploy
+# can roll out a new service worker without 24-hour-stale caches
+# pinning the old one.
+<FilesMatch "\.(css|js|png|jpg|svg|woff2?|webmanifest)$">
     Header set Cache-Control "public, max-age=3600"
 </FilesMatch>
+<Files "sw.js">
+    Header set Cache-Control "no-cache, max-age=0, must-revalidate"
+</Files>
 
 # Send a few safety headers. We intentionally do NOT set CSP — the
 # inline <script> in chat.php that injects window.OREO is essential
