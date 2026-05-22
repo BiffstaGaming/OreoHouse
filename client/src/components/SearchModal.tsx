@@ -1,11 +1,18 @@
-// Cross-conversation message search. Opens from the topbar 🔍 button,
-// debounces the query (~250 ms), shows newest-first results with the
+// Message search modal. Two modes:
+//   - Cross-conversation (default): opens from the topbar 🔍 button
+//     or Ctrl+K. Returns hits from every conv the user is a member of.
+//   - In-conversation: pass scopeConvID to restrict to one conv —
+//     this is the Ctrl+F "find in this chat" entry point. The header
+//     swaps to "Search in {convLabel}" so the user can see they're
+//     scoped.
+//
+// Debounces the query (~250 ms); shows newest-first results with the
 // originating conversation name + a 200-char body preview. Clicking
 // a result opens that conversation's chat window in the foreground.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { searchMessages } from "../lib/api";
+import { searchInConversation, searchMessages } from "../lib/api";
 import { displayNameOf } from "../lib/users";
 import type { ConversationView, MessageView, UserInfo } from "../types/proto";
 
@@ -15,6 +22,7 @@ export function SearchModal({
   conversations,
   userCache,
   self,
+  scopeConvID,
   onClose,
   onJump,
 }: {
@@ -23,6 +31,7 @@ export function SearchModal({
   conversations: Map<number, ConversationView>;
   userCache: Map<number, UserInfo>;
   self: UserInfo;
+  scopeConvID?: number;
   onClose: () => void;
   onJump: (convID: number) => void;
 }) {
@@ -43,7 +52,9 @@ export function SearchModal({
   }, [onClose]);
 
   // Debounced query: each keystroke schedules a 250 ms timeout; new
-  // strokes cancel the previous timer so we only fire once.
+  // strokes cancel the previous timer so we only fire once. When
+  // scopeConvID is set we hit the in-conv endpoint so the server can
+  // skip checking every conv the user is in.
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
@@ -53,7 +64,9 @@ export function SearchModal({
     setLoading(true);
     const handle = window.setTimeout(async () => {
       try {
-        const rows = await searchMessages(serverUrl, token, query.trim());
+        const rows = scopeConvID
+          ? await searchInConversation(serverUrl, token, scopeConvID, query.trim())
+          : await searchMessages(serverUrl, token, query.trim());
         setResults(rows);
         setError(null);
       } catch (err) {
@@ -63,7 +76,7 @@ export function SearchModal({
       }
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [query, serverUrl, token]);
+  }, [query, serverUrl, token, scopeConvID]);
 
   function convLabel(convID: number): string {
     const c = conversations.get(convID);
@@ -75,6 +88,12 @@ export function SearchModal({
     return c.name || (c.type === "room" ? "Room" : "Group");
   }
 
+  const heading = useMemo(() => {
+    if (scopeConvID) return `Search in ${convLabel(scopeConvID)}`;
+    return "Search messages";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeConvID, conversations]);
+
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
       <div
@@ -82,7 +101,7 @@ export function SearchModal({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="modal-header">
-          <h2>Search messages</h2>
+          <h2>{heading}</h2>
           <button type="button" onClick={onClose} aria-label="Close">
             ×
           </button>
