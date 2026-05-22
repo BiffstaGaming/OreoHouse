@@ -23,6 +23,10 @@
           "type": "toml",
           "path": "client/src-tauri/Cargo.toml",
           "jsonpath": "$.package.version"
+        },
+        {
+          "type": "generic",
+          "path": "web/src/config.php"
         }
       ]
     }

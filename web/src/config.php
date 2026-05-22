@@ -7,13 +7,12 @@
 declare(strict_types=1);
 
 /**
- * The user-facing version string surfaced in the About modal. Kept
- * in sync with client/package.json by release-please's manifest
- * extension below; bumping the desktop client also rewrites this
- * line so both stay aligned. Pre-release-please-aware, treat as
- * authoritative and update by hand when you cut a release.
+ * The user-facing version string surfaced in the About modal. The
+ * trailing `x-release-please-version` marker tells release-please's
+ * generic file updater (see release-please-config.json) to rewrite
+ * the literal on every release PR — don't bump it by hand.
  */
-const OREO_VERSION = '0.16.1';
+const OREO_VERSION = '0.21.1'; // x-release-please-version
 
 const OREO_REPO_URL = 'https://github.com/BiffstaGaming/OreoHouse';
 
