@@ -562,7 +562,10 @@ function ChatScreen({
     const client = connect(wsUrl, {
       onOpen: () => setStatus("open"),
       onMessage: handleServerMessage,
-      onClose: () => setStatus("closed"),
+      // The ws wrapper auto-reconnects with capped backoff, so a
+      // close is "we're trying again", not "give up". Flipping back
+      // to "connecting" makes the status badge reflect that.
+      onClose: () => setStatus("connecting"),
       onError: () => setStatus("error"),
     });
     wsRef.current = client;
