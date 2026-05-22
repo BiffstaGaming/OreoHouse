@@ -151,13 +151,44 @@ export default function App() {
   // validated implicitly on the first authenticated REST call — a 401
   // there clears storage and bounces us back to login.
   const [session, setSession] = useState<Session | null>(() => loadSession());
-  // One-shot update check on mount. Null = no update / not in Tauri.
+  // Update check: runs on mount, then every hour, plus on window focus
+  // if more than an hour has passed since the last check. Null means
+  // "no update available, or not running inside Tauri." Once an update
+  // is offered the periodic re-checks stop — there's nothing to learn
+  // until the user installs or dismisses it.
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
 
   useEffect(() => {
-    void checkForUpdate().then((u) => {
-      if (u) setUpdate(u);
-    });
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    let cancelled = false;
+    let lastCheckAt = 0;
+    let haveUpdate = false;
+
+    async function runCheck() {
+      if (cancelled || haveUpdate) return;
+      lastCheckAt = Date.now();
+      const u = await checkForUpdate();
+      if (cancelled || !u) return;
+      haveUpdate = true;
+      setUpdate(u);
+    }
+
+    void runCheck();
+
+    const intervalId = window.setInterval(() => {
+      void runCheck();
+    }, ONE_HOUR_MS);
+
+    function onFocus() {
+      if (Date.now() - lastCheckAt > ONE_HOUR_MS) void runCheck();
+    }
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   function handleSession(s: Session) {
