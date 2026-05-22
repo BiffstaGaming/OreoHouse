@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.2](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.1...v0.20.2) (2026-05-22)
+
+
+### Bug Fixes
+
+* **client:** read APP_VERSION from package.json instead of hard-coding ([4310b12](https://github.com/BiffstaGaming/OreoHouse/commit/4310b12e86e9c982d47c6914381bc43994bd2a9a))
+* **client:** read APP_VERSION from package.json instead of hard-coding ([b691aa4](https://github.com/BiffstaGaming/OreoHouse/commit/b691aa496f6dce60ab8b79cfadfb0647eee2f17b))
+
 ## [0.20.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.0...v0.20.1) (2026-05-22)
 
 
