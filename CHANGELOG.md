@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.0...v0.21.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **client:** auto-reconnect WebSocket with capped backoff ([51a540d](https://github.com/BiffstaGaming/OreoHouse/commit/51a540d19e9d97c4c11ba93eb7837505c3cc4fcf))
+
 ## [0.21.0](https://github.com/BiffstaGaming/OreoHouse/compare/v0.20.2...v0.21.0) (2026-05-22)
 
 
