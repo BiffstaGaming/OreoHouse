@@ -1,228 +1,354 @@
-/* OreoHouse admin panel — vanilla CSS, MSN-flavored to match the
-   desktop client. No build step, no framework. */
+/* OreoHouse admin panel — vanilla CSS, modern flat design.
+ *
+ * Inspired by the Linear / Vercel / Stripe / PostHog admin look:
+ *
+ *   - High-contrast hero numbers (the number is the point of a
+ *     stat tile; the label is the supporting context)
+ *   - Real elevation steps between page bg / card / tile so the
+ *     eye picks out hierarchy without thinking about it
+ *   - Tabular numerics in tables — numbers right-aligned, monospace,
+ *     so columns visually scan straight down
+ *   - Grouped sections in the dashboard ("Activity", "Messages",
+ *     "Conversations & media") instead of one undifferentiated grid
+ *   - Compact action buttons in table rows (icon + short label)
+ *
+ * Light + dark modes both work; the JS doesn't pick a theme.
+ */
 
 :root {
-  --msn-blue: #2c5dab;
-  --msn-blue-light: #4a8de8;
-  --msn-blue-dark: #1a3f7d;
-  --bg: #eef2f7;
-  --bg-card: #ffffff;
-  --text: #16223a;
-  --text-muted: #5f6b80;
-  --border: #c4d0e2;
-  --danger: #b53d3d;
-  --success: #2c7a3d;
+  /* Brand colour — the same MSN blue used in the desktop client,
+   * pulled out to one constant so accent changes are one-line. */
+  --accent:        #4a8de8;
+  --accent-strong: #2c5dab;
+  --accent-soft:   rgba(74, 141, 232, 0.14);
+  --danger:        #d9534f;
+  --success:       #2c7a3d;
+  /* Surface tokens — three discrete elevation steps. */
+  --bg:            #f3f5fa;   /* page background */
+  --bg-card:       #ffffff;   /* the cards on the page */
+  --bg-tile:       #f8fafd;   /* stat tiles inside a card */
+  --text:          #16213a;   /* primary text */
+  --text-strong:   #0b1224;   /* hero values + headings */
+  --text-muted:    #6b7a92;   /* labels, captions, micro-copy */
+  --text-faint:    #9aa5b8;   /* never-attended-to placeholders */
+  --border:        #e1e6ee;
+  --border-soft:   #edf0f5;
+  --shadow-card:   0 1px 0 rgba(0,0,0,0.02), 0 2px 8px rgba(20,30,60,0.04);
+  --radius:        8px;
+  --radius-sm:     6px;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", Tahoma, Verdana, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* ---- Topbar ------------------------------------------------------- */
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.6rem 1rem;
-  background: linear-gradient(to bottom, var(--msn-blue-light), var(--msn-blue));
-  color: white;
-  box-shadow: 0 1px 0 var(--msn-blue-dark), inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+  padding: 0.75rem 1.25rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
-
 .topbar h1 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
 }
-
 .topbar-right {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.85rem;
   align-items: center;
 }
-
 #who {
   font-size: 0.85rem;
-  opacity: 0.9;
+  color: var(--text-muted);
 }
 
+/* ---- Layout ------------------------------------------------------- */
+
 main {
-  max-width: 60rem;
-  margin: 1.5rem auto;
-  padding: 0 1rem;
+  max-width: 80rem;
+  margin: 1.75rem auto;
+  padding: 0 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
 }
+
+/* ---- Cards -------------------------------------------------------- */
 
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1.25rem 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.6rem;
+  box-shadow: var(--shadow-card);
 }
-
+.card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 1rem;
+}
 .card h2 {
-  margin: 0 0 1rem;
-  font-size: 1.05rem;
+  margin: 0;
+  font-size: 1rem;
   font-weight: 600;
-  color: var(--msn-blue-dark);
+  color: var(--text-strong);
+  letter-spacing: -0.005em;
 }
-
-.muted {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
+.muted       { color: var(--text-muted); }
+.muted.small { font-size: 0.78rem; }
 code {
-  background: #eef2f7;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-family: Consolas, "Courier New", monospace;
+  background: var(--accent-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 0.85em;
 }
 
+/* ---- Forms (login + Add user + Reset modal) ----------------------- */
+
 label {
   display: block;
-  margin-bottom: 0.75rem;
-  font-size: 0.85rem;
+  margin-bottom: 0.9rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
+  font-weight: 500;
 }
-
 input[type="text"],
 input[type="password"] {
   width: 100%;
-  margin-top: 0.25rem;
-  padding: 0.4rem 0.55rem;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
-  border-radius: 3px;
-  background: white;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
   color: var(--text);
   font: inherit;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-
 input[type="text"]:focus,
 input[type="password"]:focus {
   outline: none;
-  border-color: var(--msn-blue-light);
-  box-shadow: 0 0 0 3px rgba(74, 141, 232, 0.25);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
+
+/* ---- Buttons ------------------------------------------------------ */
 
 button {
-  background: linear-gradient(to bottom, #ffffff, #d9e6f7);
-  border: 1px solid var(--msn-blue);
-  color: var(--msn-blue-dark);
-  padding: 0.4rem 0.95rem;
-  border-radius: 3px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.5rem 0.95rem;
+  border-radius: var(--radius-sm);
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
-  font-weight: 600;
+  transition: background 0.1s, border-color 0.1s;
 }
-
 button:hover:not(:disabled) {
-  background: linear-gradient(to bottom, #f2f7ff, #c6d8f0);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
-
 button:active:not(:disabled) {
-  background: linear-gradient(to bottom, #d9e6f7, #ffffff);
+  background: var(--accent-soft);
 }
-
 button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
-
+/* Primary action — the one button that "completes" a form. */
+button[type="submit"]:not(.icon-btn):not(.danger) {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: #fff;
+  font-weight: 600;
+}
+button[type="submit"]:not(.icon-btn):not(.danger):hover:not(:disabled) {
+  background: var(--accent-strong);
+}
 button.danger {
   border-color: var(--danger);
   color: var(--danger);
 }
+.icon-btn {
+  padding: 0.32rem 0.7rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* ---- Stats: grouped tiles ---------------------------------------- */
+
+.stats-section + .stats-section { margin-top: 1.2rem; }
+.stats-section-title {
+  margin: 0 0 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  color: var(--text-muted);
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.7rem;
+}
+.stat-tile {
+  background: var(--bg-tile);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.stat-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.stat-value {
+  /* The hero number. Tabular figures so 1,234 and 1,567 line up if
+   * the user resizes the page. */
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+.stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+.stat-hint {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+#stats-generated {
+  margin: 1rem 0 0;
+}
+
+/* ---- Tables ------------------------------------------------------- */
 
 table {
   width: 100%;
   border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
-
 th, td {
   text-align: left;
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.9rem;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 0.86rem;
+  vertical-align: middle;
 }
-
 th {
   font-weight: 600;
   color: var(--text-muted);
-  background: #f4f7fb;
+  background: transparent;
+  border-bottom-color: var(--border);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+tbody tr:hover {
+  background: var(--accent-soft);
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+/* Right-align numeric columns; monospace-ish for column scanning. */
+td.num {
+  text-align: right;
+  font-feature-settings: "tnum" 1;
+}
+th.num { text-align: right; }
+td.date,
+td.client {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+td.username {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+td.row-actions {
+  text-align: right;
+  width: 1px; /* shrink to content */
+  white-space: nowrap;
 }
 
-tbody tr:hover {
-  background: #f7faff;
-}
+/* ---- Badges (admin/user pill) ------------------------------------ */
 
 .badge {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 0.75rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
   font-weight: 600;
-  background: #eef2f7;
+  background: var(--border-soft);
   color: var(--text-muted);
+  letter-spacing: 0.02em;
 }
-
 .badge.admin {
-  background: var(--msn-blue);
-  color: white;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
-.error {
-  color: var(--danger);
-  font-size: 0.85rem;
-  margin: 0.5rem 0 0;
-}
+.error   { color: var(--danger);  font-size: 0.85rem; margin: 0.5rem 0 0; }
+.success { color: var(--success); font-size: 0.85rem; margin: 0.5rem 0 0; }
 
-.success {
-  color: var(--success);
-  font-size: 0.85rem;
-  margin: 0.5rem 0 0;
-}
+/* ---- Modal (reset password) -------------------------------------- */
 
 dialog {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 0;
   background: var(--bg-card);
   color: var(--text);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  min-width: 22rem;
+  box-shadow: 0 8px 32px rgba(20,30,60,0.18);
+  min-width: 24rem;
 }
-
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(20,30,60,0.45);
+  backdrop-filter: blur(2px);
 }
-
-dialog form {
-  padding: 1.25rem 1.5rem;
-}
-
+dialog form { padding: 1.4rem 1.6rem; }
 dialog h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.05rem;
-  color: var(--msn-blue-dark);
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+  color: var(--text-strong);
 }
-
 dialog menu {
-  margin: 1rem 0 0;
+  margin: 1.1rem 0 0;
   padding: 0;
   display: flex;
   justify-content: flex-end;
@@ -230,65 +356,37 @@ dialog menu {
   list-style: none;
 }
 
+/* ---- Dark mode ---------------------------------------------------- */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1a2233;
-    --bg-card: #232c3f;
-    --text: #e8ecf3;
-    --text-muted: #98a3b8;
-    --border: #3a455e;
+    --bg:          #0d1117;
+    --bg-card:     #161b22;
+    --bg-tile:     #1c2330;
+    --text:        #e6ecf3;
+    --text-strong: #f4f6fb;
+    --text-muted:  #8b96ab;
+    --text-faint:  #5a6679;
+    --border:      #262e3d;
+    --border-soft: #1f2735;
+    --shadow-card: 0 1px 0 rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.3);
+    --accent-soft: rgba(74, 141, 232, 0.18);
   }
-  code {
-    background: #2c3650;
+  code { background: rgba(74,141,232,0.2); }
+  .badge      { background: rgba(255,255,255,0.06); }
+  .badge.admin {
+    background: rgba(74,141,232,0.22);
+    color: #a8c5f4;
   }
   input[type="text"],
   input[type="password"] {
-    background: #1a2233;
+    background: var(--bg-tile);
+  }
+  button {
+    background: var(--bg-tile);
     color: var(--text);
   }
-  th {
-    background: #2c3650;
-  }
-  tbody tr:hover {
-    background: #2c3650;
-  }
-  .stat-tile {
-    background: #2c3650;
-    border-color: #3a4768;
+  button[type="submit"]:not(.icon-btn):not(.danger) {
+    background: var(--accent);
+    color: #fff;
   }
 }
-
-/* Stats overview grid (dashboard top card). Auto-fills columns
- * so the layout adapts to the admin's window width. */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.6rem;
-  margin: 0.5rem 0 0.4rem;
-}
-.stat-tile {
-  background: #f6f8fc;
-  border: 1px solid #e2e6ee;
-  border-radius: 0.45rem;
-  padding: 0.7rem 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.stat-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.1;
-}
-.stat-label {
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #5e6c84;
-}
-.stat-hint {
-  font-size: 0.74rem;
-  color: #5e6c84;
-  margin-top: 0.15rem;
-}
-.muted.small { font-size: 0.78rem; }
