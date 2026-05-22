@@ -1219,6 +1219,11 @@ function ChatScreen({
       resizable: true,
       visible: true,
       focus: true,
+      // Default in Tauri 2 is to let the OS capture drops and fire
+      // tauri://drag-drop on the Rust side. We want the standard
+      // HTML5 ondrop event in the webview so our composer drag-drop
+      // upload code sees the files.
+      dragDropEnabled: false,
     });
 
     openChatsRef.current.add(convID);
