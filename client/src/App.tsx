@@ -15,6 +15,7 @@ import {
 } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getAllWindows } from "@tauri-apps/api/window";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 
 import {
   ApiError,
@@ -1487,11 +1488,26 @@ function ChatScreen({
                   setMenuOpen(false);
                   const u = await checkForUpdate();
                   if (u) {
-                    if (confirm(`Update available: ${u.version}. Install now?`)) {
-                      try { await u.install(); } catch (e) { alert("Update failed: " + (e as Error).message); }
+                    // Native ask() — no "tauri.localhost says" header.
+                    const yes = await ask(
+                      `Version ${u.version} is available. Install now?`,
+                      { title: "OreoHouse update", kind: "info" },
+                    );
+                    if (yes) {
+                      try {
+                        await u.install();
+                      } catch (e) {
+                        await message((e as Error).message, {
+                          title: "Update failed",
+                          kind: "error",
+                        });
+                      }
                     }
                   } else {
-                    alert("You're on the latest version.");
+                    await message("You're on the latest version.", {
+                      title: "OreoHouse",
+                      kind: "info",
+                    });
                   }
                 }}
                 onSignOut={() => { setMenuOpen(false); handleSignOut(); }}

@@ -15,6 +15,9 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Native dialog plugin — gives us ask() / message() that
+        // render as OS-native dialogs (no "tauri.localhost says").
+        .plugin(tauri_plugin_dialog::init())
         // updater + process are required for the in-app auto-update
         // banner: updater fetches + verifies the Ed25519-signed
         // manifest, process exposes `relaunch()` so the JS side can
