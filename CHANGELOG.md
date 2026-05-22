@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.3](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.2...v0.21.3) (2026-05-22)
+
+
+### Bug Fixes
+
+* **client:** make offline dot visible on dark themes ([41372a2](https://github.com/BiffstaGaming/OreoHouse/commit/41372a257db4ea56e46b468c3d60470cfe5c2dbe))
+
 ## [0.21.2](https://github.com/BiffstaGaming/OreoHouse/compare/v0.21.1...v0.21.2) (2026-05-22)
 
 
