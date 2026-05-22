@@ -10,24 +10,24 @@ import {
   setMyDisplayName,
   uploadMyAvatar,
 } from "../lib/api";
-import { THEMES, type ThemeName } from "../lib/theme";
 import type { UserInfo } from "../types/proto";
 
 import { Avatar } from "./Avatar";
+
+// Profile modal: display name + avatar only. Theme picker used to
+// live here too but has moved to the Preferences modal so per-machine
+// UX settings (theme + sounds + notifications) all stack in one
+// place, mirroring the web client.
 
 export function ProfileModal({
   me,
   serverUrl,
   token,
-  theme,
-  onThemeChange,
   onClose,
 }: {
   me: UserInfo;
   serverUrl: string;
   token: string;
-  theme: ThemeName;
-  onThemeChange: (next: ThemeName) => void;
   onClose: () => void;
 }) {
   const [displayName, setDisplayName] = useState(me.display_name ?? "");
@@ -151,33 +151,6 @@ export function ProfileModal({
                 autoComplete="off"
               />
             </label>
-            <fieldset className="theme-picker">
-              <legend>Theme</legend>
-              <div className="theme-options">
-                {THEMES.map((t) => (
-                  <label
-                    key={t.name}
-                    className={
-                      "theme-option" +
-                      (theme === t.name ? " theme-option-active" : "")
-                    }
-                  >
-                    <input
-                      type="radio"
-                      name="oreo-theme"
-                      value={t.name}
-                      checked={theme === t.name}
-                      onChange={() => onThemeChange(t.name)}
-                    />
-                    <span className={`theme-swatch theme-swatch-${t.name}`} />
-                    <span className="theme-meta">
-                      <span className="theme-label">{t.label}</span>
-                      <span className="theme-tagline">{t.tagline}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
             {error && <div className="error">{error}</div>}
             <div className="form-actions">
               <button type="button" onClick={onClose} disabled={busy}>

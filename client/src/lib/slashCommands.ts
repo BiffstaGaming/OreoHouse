@@ -27,7 +27,24 @@ const EIGHT_BALL_ANSWERS = [
 
 // Result of expansion. `handled` means the command was recognised;
 // `body` is the text to actually send (may be empty after expansion).
-export type SlashResult = { handled: boolean; body: string };
+// `showHelp` short-circuits the send and tells the caller to pop the
+// slash-command cheat-sheet modal instead.
+export type SlashResult = { handled: boolean; body: string; showHelp?: boolean };
+
+// Rows for the /help modal. First N-1 entries are the key strings (so
+// aliases like /coin // /flip render as "/coin / /flip"); the last
+// entry is the description.
+export const SLASH_HELP_ROWS: string[][] = [
+  ["/help", "Show this list of commands"],
+  ["/dice [NdM]", "Roll N M-sided dice (default 1d6). e.g. /dice 2d6"],
+  ["/coin", "/flip", "Flip a coin"],
+  ["/8ball <q>", "Magic 8-ball oracle answer"],
+  ["/me <text>", 'Action message: "* alice waves"'],
+  ["/shrug [text]", "Append ¯\\_(ツ)_/¯ (optionally after your text)"],
+  ["/tableflip [text]", "Append (╯°□°)╯︵ ┻━┻"],
+  ["/unflip [text]", "Append ┬─┬ ノ( ゜-゜ノ)"],
+  ["/time", "Insert the current local time"],
+];
 
 export function expandSlashCommand(input: string): SlashResult {
   const trimmed = input.trim();
@@ -35,6 +52,11 @@ export function expandSlashCommand(input: string): SlashResult {
   const [cmd, ...rest] = trimmed.slice(1).split(/\s+/);
   const arg = rest.join(" ");
   switch (cmd.toLowerCase()) {
+    case "help":
+    case "commands":
+      // Caller checks showHelp and opens the cheat-sheet modal.
+      // Body stays empty so an accidental fall-through doesn't send.
+      return { handled: true, body: "", showHelp: true };
     case "dice":
     case "roll": {
       // Optional NdM syntax (defaults to 1d6). Caps at 10 dice / d100.

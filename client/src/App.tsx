@@ -85,6 +85,7 @@ import { checkForUpdate, type AvailableUpdate } from "./lib/updater";
 import { displayNameOf } from "./lib/users";
 import { connect, type ConnectionStatus, type WSClient } from "./lib/ws";
 import { Avatar } from "./components/Avatar";
+import { PreferencesModal } from "./components/PreferencesModal";
 import { ProfileModal } from "./components/ProfileModal";
 import { SearchModal } from "./components/SearchModal";
 // package.json is the source of truth for our version — release-please
@@ -404,6 +405,20 @@ function ChatScreen({
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+
+  // Ctrl/Cmd+K opens the global search modal. Listed in the shortcuts
+  // modal — previously advertised but never bound.
+  useEffect(() => {
+    function onKey(ev: globalThis.KeyboardEvent) {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") {
+        ev.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   // Set of conv IDs the user has individually muted (suppresses sound
   // + flash + unread on incoming messages for those convs). Persisted
   // per-machine via localStorage.
@@ -1526,6 +1541,7 @@ function ChatScreen({
                 onClose={() => setMenuOpen(false)}
                 onAbout={() => { setMenuOpen(false); setAboutOpen(true); }}
                 onShortcuts={() => { setMenuOpen(false); setShortcutsOpen(true); }}
+                onPreferences={() => { setMenuOpen(false); setPrefsOpen(true); }}
                 onCheckUpdate={async () => {
                   setMenuOpen(false);
                   const u = await checkForUpdate();
@@ -1564,9 +1580,18 @@ function ChatScreen({
           me={userCache.get(session.user.id) ?? session.user}
           serverUrl={session.serverUrl}
           token={session.token}
-          theme={theme}
-          onThemeChange={changeTheme}
           onClose={() => setProfileOpen(false)}
+        />
+      )}
+      {prefsOpen && (
+        <PreferencesModal
+          theme={theme}
+          soundsMuted={muted}
+          onThemeChange={changeTheme}
+          onSoundsMutedChange={(m) => {
+            if (m !== muted) toggleMuted();
+          }}
+          onClose={() => setPrefsOpen(false)}
         />
       )}
       {searchOpen && (
@@ -2306,12 +2331,14 @@ function SettingsMenu({
   onClose,
   onAbout,
   onShortcuts,
+  onPreferences,
   onCheckUpdate,
   onSignOut,
 }: {
   onClose: () => void;
   onAbout: () => void;
   onShortcuts: () => void;
+  onPreferences: () => void;
   onCheckUpdate: () => void;
   onSignOut: () => void;
 }) {
@@ -2332,6 +2359,9 @@ function SettingsMenu({
   }, [onClose]);
   return (
     <div className="settings-menu">
+      <button type="button" className="settings-menu-item" onClick={onPreferences}>
+        🎨 Preferences
+      </button>
       <button type="button" className="settings-menu-item" onClick={onAbout}>
         ℹ️ About OreoHouse
       </button>

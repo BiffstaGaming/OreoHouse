@@ -1,0 +1,25 @@
+{
+  "name": "OreoHouse",
+  "short_name": "OreoHouse",
+  "description": "Self-hosted family LAN messenger — MSN-flavoured chat on your home network.",
+  "start_url": "/chat.php",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#eef4ff",
+  "theme_color": "#2c5dab",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/img/icon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/img/logo.png",
+      "sizes": "956x964",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

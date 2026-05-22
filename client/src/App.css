@@ -1068,6 +1068,92 @@ button:disabled {
   margin: 0.2rem 0.25rem;
 }
 
+/* --- Conversation actions menu (3-dot in chat-window header) --- */
+.conv-actions-menu {
+  position: absolute;
+  right: 0.5rem;
+  top: calc(100% + 4px);
+  z-index: 80;
+  background: var(--msn-bg-soft);
+  border: 1px solid var(--msn-border);
+  border-radius: 0.45rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  min-width: 13rem;
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.conv-actions-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  padding: 0.45rem 0.6rem;
+  color: var(--msn-text);
+  font: inherit;
+  cursor: pointer;
+}
+.conv-actions-item:hover {
+  background: rgba(120, 140, 200, 0.12);
+  border-color: var(--msn-border-soft);
+}
+.conv-actions-danger { color: #d44; }
+.conv-actions-danger:hover { background: rgba(220, 70, 70, 0.14); }
+.conv-actions-sep {
+  height: 1px;
+  background: var(--msn-border-soft);
+  margin: 0.2rem 0.25rem;
+}
+
+/* --- Manage members modal --- */
+.manage-members-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.manage-members-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 0.35rem;
+}
+.manage-members-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Preferences modal: sound toggle row --- */
+.prefs-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem;
+  border: 1px solid var(--msn-border-soft);
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+.prefs-toggle input[type="checkbox"] {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+.prefs-toggle-help {
+  font-size: 0.82rem;
+  color: var(--msn-text-muted);
+}
+
 .about-modal { width: min(28rem, 96vw); }
 .about-body { text-align: center; }
 .about-logo {

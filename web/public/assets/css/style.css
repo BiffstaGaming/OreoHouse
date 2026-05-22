@@ -1614,3 +1614,92 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
     padding: 0.1rem 0.4rem;
     font-size: 0.82rem;
 }
+
+/* ----------------------------------------------------------------- */
+/* ---- Responsive: phones + narrow tablets ------------------------ */
+/* ----------------------------------------------------------------- */
+/*
+ * Wide layout (>= 720px) is the existing sidebar + main side-by-side.
+ * Below that we collapse to one pane at a time, like every mobile
+ * messenger: contact list when no conv open, chat when one is.
+ * body[data-conv-open] is set by app.js openConversation/closeConversation
+ * and toggles which pane is visible.
+ */
+
+/* Mobile back button — only visible at narrow widths. */
+.chat-back {
+    display: none;
+    background: transparent;
+    border: none;
+    font-size: 1.6rem;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+    color: var(--msn-text);
+    cursor: pointer;
+}
+
+@media (max-width: 720px) {
+    .topbar {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.95rem;
+    }
+    .topbar-brand img { height: 1.4rem; }
+    .topbar-self strong { display: none; }   /* save room: avatar alone is enough */
+
+    .layout {
+        position: relative;
+    }
+    /* Stack the panes; one is hidden depending on data-conv-open. */
+    .sidebar {
+        flex: 1 1 100%;
+        max-width: 100%;
+        border-right: none;
+    }
+    .main {
+        flex: 1 1 100%;
+        max-width: 100%;
+        display: none;       /* hidden until a conv is opened */
+    }
+    body[data-conv-open] .sidebar { display: none; }
+    body[data-conv-open] .main    { display: flex; }
+
+    .chat-back { display: inline-flex; align-items: center; }
+
+    .chat-header {
+        flex-wrap: wrap;
+        gap: 0.3rem 0.5rem;
+        padding: 0.45rem 0.55rem;
+    }
+    .chat-actions {
+        margin-left: auto;
+    }
+    /* Hit-target friendly icon buttons on touch. */
+    .composer-icon-btn {
+        min-width: 2.4rem;
+        min-height: 2.4rem;
+        font-size: 1.15rem;
+    }
+    .composer-input {
+        font-size: 1rem;     /* prevent iOS Safari zoom-on-focus */
+    }
+    .composer-send {
+        min-height: 2.4rem;
+        padding: 0.4rem 0.9rem;
+    }
+    /* Modals fill the screen on small phones — sub-tablet width
+       backdrops look cramped otherwise. */
+    .modal {
+        width: min(96vw, 32rem);
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+    /* Status menu popover would overflow to the right edge; clamp. */
+    .status-popover { right: 0; }
+}
+
+/* Very narrow (small phones in portrait) — squeeze a bit more. */
+@media (max-width: 380px) {
+    .topbar-brand span { display: none; }   /* keep just the logo */
+    .chat-name { font-size: 0.95rem; }
+    .composer-input { rows: 1; }
+}
