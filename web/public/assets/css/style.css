@@ -1703,3 +1703,24 @@ input:focus, textarea:focus { border-color: var(--msn-blue-light); box-shadow: 0
     .chat-name { font-size: 0.95rem; }
     .composer-input { rows: 1; }
 }
+
+/* Inline warning shown when GET /api/users fails (deployed Go server
+ * predates the endpoint). Styled like the login-page alert so it
+ * reads as a problem-the-admin-needs-to-fix, not a generic note. */
+.family-roster-error {
+    background: #fff4d6;
+    color: #6a4400;
+    border: 1px solid #e0b35e;
+    border-radius: 0.35rem;
+    padding: 0.5rem 0.6rem;
+    margin: 0.25rem 0.4rem 0.4rem;
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+@media (prefers-color-scheme: dark) {
+    .family-roster-error {
+        background: #3a2e10;
+        color: #f2dca5;
+        border-color: #6a5524;
+    }
+}
