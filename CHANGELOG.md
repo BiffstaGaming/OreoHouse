@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.2](https://github.com/BiffstaGaming/OreoHouse/compare/v0.23.1...v0.23.2) (2026-05-23)
+
+
+### Bug Fixes
+
+* **web:** Browse Rooms crash + visible hint when /api/users 404s ([e1c6e07](https://github.com/BiffstaGaming/OreoHouse/commit/e1c6e07c1c29671359d29921f25a13d1a5fc94e4))
+
 ## [0.23.1](https://github.com/BiffstaGaming/OreoHouse/compare/v0.23.0...v0.23.1) (2026-05-22)
 
 
